@@ -197,6 +197,12 @@ class GroqProvider(LLMProvider):
                             "You analyze meeting transcripts and return only valid JSON. "
                             'Use exactly this structure: {"summary":"...","key_points":["..."],'
                             '"action_items":[{"task":"...","assigned_to":"...","deadline":null}]}. '
+                            "Use only facts explicitly present in the provided transcript. "
+                            "Use exact names, owners, and deadline wording from the transcript. "
+                            "If the transcript was edited, trust the edited transcript over any "
+                            "earlier version. Keep summary, key points, and action items "
+                            "internally consistent with each other and with the transcript. "
+                            "Only include action items that are clearly actionable. "
                             "Use null when an assignee or deadline is unknown. "
                             "Do not include markdown, code fences, or extra commentary."
                         ),
@@ -206,12 +212,17 @@ class GroqProvider(LLMProvider):
                         "content": (
                             "Analyze the following meeting transcript and produce the JSON "
                             "structure exactly as requested.\n\n"
+                            "Important rules:\n"
+                            "- Do not reuse names from previous transcript versions.\n"
+                            "- If an owner name appears in the transcript, copy it exactly.\n"
+                            "- If no owner is stated for a task, assigned_to must be null.\n"
+                            "- If no deadline is stated for a task, deadline must be null.\n\n"
                             f"{text[:12000]}"
                         ),
                     },
                 ],
-                temperature=0.3,
-                max_tokens=1024,
+                temperature=0.1,
+                max_tokens=1200,
             )
         except Exception as e:
             raise SummaryGenerationError(f"Groq API request failed: {e}") from e

@@ -5,19 +5,24 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { getWebSocketBaseUrl } from "@/lib/publicApi";
-import { meetingsApi, transcriptsApi, type MeetingDetail } from "@/services/api";
-import { useAuthStore } from "@/store/authStore";
+import { ActionItemsList } from "@/components/meeting/ActionItemsList";
+import { QASection } from "@/components/meeting/QASection";
+import { SummaryCard } from "@/components/meeting/SummaryCard";
+import { TranscriptSection } from "@/components/meeting/TranscriptSection";
+import {
+  meetingsApi,
+  transcriptsApi,
+  type MeetingDetail,
+  type MeetingTranscript,
+} from "@/services/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 
 export default function MeetingRoomPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const token = useRequireAuth();
-  const rawToken = useAuthStore((s) => s.token);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [wsStatus, setWsStatus] = useState<string>("idle");
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -59,19 +64,6 @@ export default function MeetingRoomPage() {
     };
   }, [token, id]);
 
-  useEffect(() => {
-    if (!id || !rawToken) return;
-    const url = `${getWebSocketBaseUrl()}/ws/meetings/${id}?token=${encodeURIComponent(rawToken)}`;
-    const ws = new WebSocket(url);
-    setWsStatus("connecting");
-    ws.onopen = () => setWsStatus("connected");
-    ws.onerror = () => setWsStatus("error");
-    ws.onclose = () => setWsStatus("closed");
-    return () => {
-      ws.close();
-    };
-  }, [id, rawToken]);
-
   async function handleAskSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token) return;
@@ -103,7 +95,7 @@ export default function MeetingRoomPage() {
 
   function updateTranscriptInDetail(
     transcriptId: string,
-    updates: Partial<MeetingDetail["transcripts"][number]>
+    updates: Partial<MeetingTranscript>
   ) {
     setDetail((prev) => {
       if (!prev) return prev;
@@ -114,146 +106,6 @@ export default function MeetingRoomPage() {
         ),
       };
     });
-  }
-
-  function formatTranscriptDate(value: string) {
-    return new Date(value).toLocaleString();
-  }
-
-  function renderTranscriptCard(
-    transcript: MeetingDetail["transcripts"][number],
-    options?: { compact?: boolean }
-  ) {
-    const compact = options?.compact ?? false;
-
-    return (
-      <div className="rounded border border-slate-100 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-medium text-slate-800">
-              {compact ? "Previous transcript" : "Latest transcript"}
-            </h3>
-            <p className="text-xs text-slate-400">
-              Updated {formatTranscriptDate(transcript.created_at)}
-            </p>
-          </div>
-        </div>
-
-        {transcript.summary ? (
-          <div className="mb-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
-              Summary
-            </p>
-            <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
-              {transcript.summary}
-            </p>
-          </div>
-        ) : null}
-
-        {transcript.key_points.length > 0 ? (
-          <div className="mb-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Key points
-            </p>
-            <ul className="mt-1 space-y-1 text-sm text-slate-700">
-              {transcript.key_points.map((point, index) => (
-                <li key={`${transcript.id}-point-${index}`}>• {point}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {transcript.action_items.length > 0 ? (
-          <div className="mb-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Action items
-            </p>
-            <ul className="mt-1 space-y-1 text-sm text-slate-700">
-              {transcript.action_items.map((item, index) => (
-                <li key={`${transcript.id}-action-${index}`}>
-                  <span className="font-medium text-slate-800">{item.task}</span>
-                  {item.assigned_to ? ` — ${item.assigned_to}` : ""}
-                  {item.deadline ? ` (Due: ${item.deadline})` : ""}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        <div className="mb-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Cleaned transcript
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {editingTranscriptId === transcript.id ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleCancelEdit}
-                    disabled={savingTranscriptId === transcript.id}
-                    className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveTranscript(transcript.id)}
-                    disabled={savingTranscriptId === transcript.id}
-                    className="rounded-md bg-brand-600 px-3 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {savingTranscriptId === transcript.id ? "Saving…" : "Save"}
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleStartEdit(
-                      transcript.id,
-                      transcript.cleaned_transcript ?? transcript.transcript_text
-                    )
-                  }
-                  className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Edit
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => handleRegenerateTranscript(transcript.id)}
-                disabled={regeneratingTranscriptId === transcript.id}
-                className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {regeneratingTranscriptId === transcript.id
-                  ? "Regenerating…"
-                  : "Regenerate Summary"}
-              </button>
-            </div>
-          </div>
-          <textarea
-            rows={compact ? 4 : 8}
-            value={
-              editingTranscriptId === transcript.id
-                ? editedTranscriptText
-                : transcript.cleaned_transcript ?? transcript.transcript_text
-            }
-            onChange={(e) => setEditedTranscriptText(e.target.value)}
-            disabled={editingTranscriptId !== transcript.id}
-            className="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 disabled:cursor-text disabled:opacity-100"
-          />
-        </div>
-
-        <details className="rounded-md border border-slate-200 bg-slate-50 p-3">
-          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Raw transcript
-          </summary>
-          <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
-            {transcript.transcript_text}
-          </p>
-        </details>
-      </div>
-    );
   }
 
   function handleStartEdit(transcriptId: string, currentText: string) {
@@ -317,7 +169,16 @@ export default function MeetingRoomPage() {
   }
 
   const latestTranscript = detail?.transcripts[0] ?? null;
-  const olderTranscripts = detail?.transcripts.slice(1) ?? [];
+  const visibleTranscript =
+    latestTranscript?.cleaned_transcript ?? latestTranscript?.transcript_text ?? "";
+
+  function formatMeetingDate(value: string) {
+    return new Date(value).toLocaleDateString(undefined, {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+  }
 
   if (!token) {
     return (
@@ -328,8 +189,8 @@ export default function MeetingRoomPage() {
   }
 
   return (
-    <Shell title="Meeting room">
-      <div className="space-y-6">
+    <Shell title="Meeting details">
+      <div className="space-y-8">
         <Link href="/dashboard" className="text-sm text-brand-600 hover:underline">
           ← Back to dashboard
         </Link>
@@ -342,182 +203,178 @@ export default function MeetingRoomPage() {
 
         {detail && (
           <>
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">{detail.title}</h1>
-              {detail.description && (
-                <p className="mt-1 text-slate-600">{detail.description}</p>
-              )}
-              <p className="mt-2 text-xs text-slate-400">
-                Host: {detail.host.email} · WebSocket: {wsStatus}
-              </p>
-            </div>
+            <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-600">
+                  Meeting
+                </p>
+                <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+                  {detail.title}
+                </h1>
+                {detail.description ? (
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+                    {detail.description}
+                  </p>
+                ) : null}
 
-            <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-medium text-slate-800">
-                Audio → transcript &amp; summary
-              </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Upload a recording (WAV, MP3, M4A, etc.). The server runs Whisper locally
-                and Groq for a short summary. Large files may take a minute.
-              </p>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <label className="cursor-pointer rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
-                  Choose file
-                  <input
-                    type="file"
-                    accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac"
-                    className="sr-only"
-                    disabled={uploading}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] ?? null;
-                      setAudioFile(f);
-                      setUploadError(null);
-                    }}
-                  />
-                </label>
-                <span className="text-sm text-slate-600">
-                  {audioFile ? audioFile.name : "No file selected"}
-                </span>
-                <button
-                  type="button"
-                  disabled={!audioFile || uploading}
-                  className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={async () => {
-                    if (!audioFile || !token) return;
-                    setUploading(true);
-                    setUploadError(null);
-                    setUploadMessage(null);
-                    try {
-                      await meetingsApi.uploadAudio(token, id, audioFile);
-                      setUploadMessage(
-                        "Audio processed successfully. The latest transcript has been updated below."
-                      );
-                      const refreshed = await meetingsApi.get(token, id);
-                      setDetail(refreshed);
-                    } catch (err) {
-                      setUploadError(
-                        err instanceof Error ? err.message : "Upload failed"
-                      );
-                    } finally {
-                      setUploading(false);
-                    }
-                  }}
-                >
-                  {uploading ? "Processing…" : "Upload & process"}
-                </button>
+                <div className="mt-5 flex flex-wrap gap-2 text-sm text-slate-600">
+                  <span className="rounded-full bg-slate-100 px-3 py-1">
+                    {formatMeetingDate(detail.created_at)}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1">
+                    Host: {detail.host.email}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1">
+                    Participants: {detail.participants.length}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1">
+                    Transcript versions: {detail.transcripts.length}
+                  </span>
+                </div>
               </div>
-              {uploadError && (
-                <p className="mt-3 text-sm text-red-600" role="alert">
-                  {uploadError}
-                </p>
-              )}
-              {uploadMessage && (
-                <p className="mt-4 rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
-                  {uploadMessage}
-                </p>
-              )}
-            </section>
 
-            <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-medium text-slate-800">Ask AI about this meeting</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Ask a question using the latest available transcript for this meeting.
-              </p>
-              <form className="mt-4 space-y-3" onSubmit={handleAskSubmit}>
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <input
-                    type="text"
-                    value={question}
-                    onChange={(e) => {
-                      setQuestion(e.target.value);
-                      if (askError) setAskError(null);
-                    }}
-                    placeholder="Ask anything about this meeting..."
-                    disabled={asking}
-                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-400 focus:border-brand-500"
-                  />
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Upload
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">
+                  Add meeting audio
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  Upload a recording to refresh the transcript and AI-generated meeting
+                  notes.
+                </p>
+
+                <div className="mt-4 space-y-3">
+                  <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+                    {audioFile ? audioFile.name : "Choose audio file"}
+                    <input
+                      type="file"
+                      accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac"
+                      className="sr-only"
+                      disabled={uploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setAudioFile(f);
+                        setUploadError(null);
+                      }}
+                    />
+                  </label>
+
                   <button
-                    type="submit"
-                    disabled={asking}
-                    className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    type="button"
+                    disabled={!audioFile || uploading}
+                    className="w-full rounded-2xl bg-brand-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={async () => {
+                      if (!audioFile || !token) return;
+                      setUploading(true);
+                      setUploadError(null);
+                      setUploadMessage(null);
+                      try {
+                        await meetingsApi.uploadAudio(token, id, audioFile);
+                        setUploadMessage(
+                          "Audio processed successfully. The latest meeting notes are ready."
+                        );
+                        setAudioFile(null);
+                        const refreshed = await meetingsApi.get(token, id);
+                        setDetail(refreshed);
+                      } catch (err) {
+                        setUploadError(
+                          err instanceof Error ? err.message : "Upload failed"
+                        );
+                      } finally {
+                        setUploading(false);
+                      }
+                    }}
                   >
-                    {asking ? "Asking…" : "Ask AI"}
+                    {uploading ? "Processing..." : "Upload & process"}
                   </button>
                 </div>
-                {askError && (
-                  <p className="text-sm text-red-600" role="alert">
-                    {askError}
+
+                {uploadError ? (
+                  <p className="mt-3 text-sm text-red-600" role="alert">
+                    {uploadError}
                   </p>
-                )}
-              </form>
+                ) : null}
+                {uploadMessage ? (
+                  <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    {uploadMessage}
+                  </p>
+                ) : null}
+              </div>
+            </section>
 
-              {qaHistory.length > 0 ? (
-                <div className="mt-6 space-y-3 border-t border-slate-100 pt-4">
-                  {qaHistory.map((item, index) => (
-                    <div
-                      key={`${item.question}-${index}`}
-                      className="rounded-md border border-slate-100 bg-slate-50 p-4"
+            <SummaryCard summary={latestTranscript?.summary} />
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Key Points
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">
+                  Important discussion highlights
+                </h2>
+              </div>
+
+              {latestTranscript?.key_points.length ? (
+                <ul className="space-y-3">
+                  {latestTranscript.key_points.map((point, index) => (
+                    <li
+                      key={`${latestTranscript.id}-key-point-${index}`}
+                      className="flex gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700"
                     >
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Question
-                      </p>
-                      <p className="mt-1 text-sm text-slate-800">{item.question}</p>
-                      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                        Answer
-                      </p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
-                        {item.answer}
-                      </p>
-                    </div>
+                      <span className="mt-1 h-2 w-2 rounded-full bg-brand-500" />
+                      <span className="leading-6">{point}</span>
+                    </li>
                   ))}
-                </div>
-              ) : null}
-            </section>
-
-            <section>
-              <h2 className="text-sm font-medium text-slate-800">Participants</h2>
-              <ul className="mt-2 space-y-1 text-sm">
-                {detail.participants.map((p) => (
-                  <li key={`${p.user_id}-${p.role}`}>
-                    {p.user.email}{" "}
-                    <span className="text-slate-400">({p.role})</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-
-            <section>
-              <h2 className="text-sm font-medium text-slate-800">Transcript Workspace</h2>
-              {transcriptActionMessage && (
-                <p className="mt-2 rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
-                  {transcriptActionMessage}
-                </p>
-              )}
-              {transcriptActionError && (
-                <p className="mt-2 rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
-                  {transcriptActionError}
-                </p>
-              )}
-              {!latestTranscript ? (
-                <p className="mt-2 text-sm text-slate-500">No segments stored yet.</p>
+                </ul>
               ) : (
-                <div className="mt-3 space-y-4">
-                  {renderTranscriptCard(latestTranscript)}
-                  {olderTranscripts.length > 0 ? (
-                    <details className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                      <summary className="cursor-pointer text-sm font-medium text-slate-800">
-                        Previous transcripts ({olderTranscripts.length})
-                      </summary>
-                      <div className="mt-4 space-y-3">
-                        {olderTranscripts.map((transcript) => (
-                          <div key={transcript.id}>{renderTranscriptCard(transcript, { compact: true })}</div>
-                        ))}
-                      </div>
-                    </details>
-                  ) : null}
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5">
+                  <p className="text-sm text-slate-500">
+                    No key points available yet.
+                  </p>
                 </div>
               )}
             </section>
+
+            <ActionItemsList action_items={latestTranscript?.action_items ?? []} />
+
+            <TranscriptSection
+              transcript={visibleTranscript}
+              isEditing={editingTranscriptId === latestTranscript?.id}
+              editedText={editedTranscriptText}
+              onStartEdit={() => {
+                if (!latestTranscript) return;
+                handleStartEdit(latestTranscript.id, visibleTranscript);
+              }}
+              onCancelEdit={handleCancelEdit}
+              onChange={setEditedTranscriptText}
+              onSave={() => {
+                if (!latestTranscript) return;
+                void handleSaveTranscript(latestTranscript.id);
+              }}
+              onRegenerate={() => {
+                if (!latestTranscript) return;
+                void handleRegenerateTranscript(latestTranscript.id);
+              }}
+              saving={savingTranscriptId === latestTranscript?.id}
+              regenerating={regeneratingTranscriptId === latestTranscript?.id}
+              message={transcriptActionMessage}
+              error={transcriptActionError}
+            />
+
+            <QASection
+              question={question}
+              asking={asking}
+              error={askError}
+              history={qaHistory}
+              disabled={!latestTranscript}
+              onQuestionChange={(value) => {
+                setQuestion(value);
+                if (askError) setAskError(null);
+              }}
+              onSubmit={handleAskSubmit}
+            />
           </>
         )}
 

@@ -129,6 +129,8 @@ export type MeetingDetail = Meeting & {
   }>;
 };
 
+export type MeetingTranscript = MeetingDetail["transcripts"][number];
+
 export const authApi = {
   register: (body: {
     email: string;
