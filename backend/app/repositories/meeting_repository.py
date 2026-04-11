@@ -53,3 +53,12 @@ class MeetingRepository:
         await self.session.flush()
         await self.session.refresh(transcript)
         return transcript
+
+    async def get_latest_transcript(self, meeting_id: uuid.UUID) -> Transcript | None:
+        result = await self.session.execute(
+            select(Transcript)
+            .where(Transcript.meeting_id == meeting_id)
+            .order_by(Transcript.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()

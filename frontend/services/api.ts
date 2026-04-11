@@ -162,6 +162,12 @@ export const meetingsApi = {
     }),
   get: (token: string, meetingId: string) =>
     apiRequest<MeetingDetail>(`/api/v1/meetings/${meetingId}`, { token }),
+  ask: (token: string, meetingId: string, question: string) =>
+    apiRequest<MeetingQuestionResult>(`/api/v1/meetings/${meetingId}/ask`, {
+      method: "POST",
+      token,
+      body: JSON.stringify({ question }),
+    }),
 
   /** Multipart upload — Whisper transcription + Groq summary on the server. */
   uploadAudio: (token: string, meetingId: string, file: File) =>
@@ -173,6 +179,10 @@ export type AudioUploadResult = {
   summary: string;
   key_points: string[];
   action_items: ActionItem[];
+};
+
+export type MeetingQuestionResult = {
+  answer: string;
 };
 
 async function uploadMeetingAudio(

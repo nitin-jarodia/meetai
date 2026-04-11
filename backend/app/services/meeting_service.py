@@ -23,7 +23,12 @@ from app.schemas.meeting import (
     TranscriptBrief,
 )
 from app.schemas.user import UserOut
-from app.services.ai_service import AIService, MeetingAnalysis, SummaryGenerationError
+from app.services.ai_service import (
+    AIService,
+    MeetingAnalysis,
+    QuestionAnsweringError,
+    SummaryGenerationError,
+)
 from app.services.transcription_service import transcribe_audio, TranscriptionError
 
 
@@ -35,12 +40,21 @@ class MeetingAccessDeniedError(Exception):
     """Raised when the user is not the host or a participant."""
 
 
+class TranscriptNotFoundError(Exception):
+    """Raised when no transcript exists for the meeting."""
+
+
 @dataclass(slots=True)
 class ProcessedAudioUpload:
     transcript: str
     summary: str
     key_points: list[str]
     action_items: list[dict[str, str | None]]
+
+
+@dataclass(slots=True)
+class MeetingAnswer:
+    answer: str
 
 
 class MeetingService:
@@ -134,6 +148,14 @@ class MeetingService:
         except SummaryGenerationError:
             return ai.fallback_analysis(transcript_text)
 
+    @staticmethod
+    def _select_transcript_source(transcript: Transcript) -> str:
+        return (
+            (transcript.cleaned_transcript or "").strip()
+            or (transcript.transcript_text or "").strip()
+            or (transcript.content or "").strip()
+        )
+
     async def process_audio_upload(
         self,
         meeting_id: uuid.UUID,
@@ -157,6 +179,7 @@ class MeetingService:
                 meeting_id=meeting.id,
                 content=transcript_text,
                 transcript_text=transcript_text,
+                cleaned_transcript=transcript_text,
                 summary=analysis.summary,
                 key_points=analysis.key_points,
                 action_items=action_items,
@@ -170,3 +193,30 @@ class MeetingService:
             key_points=analysis.key_points,
             action_items=action_items,
         )
+
+    async def ask_meeting_question(
+        self,
+        meeting_id: uuid.UUID,
+        user: User,
+        question: str,
+        ai: AIService,
+    ) -> MeetingAnswer:
+        meeting = await self._get_meeting_for_user(meeting_id, user)
+        transcript = await self.meetings.get_latest_transcript(meeting.id)
+        if not transcript:
+            raise TranscriptNotFoundError()
+
+        transcript_source = self._select_transcript_source(transcript)
+        if not transcript_source:
+            raise TranscriptNotFoundError()
+
+        try:
+            answer = await asyncio.to_thread(
+                ai.answer_question,
+                transcript_source,
+                question.strip(),
+            )
+        except QuestionAnsweringError:
+            answer = ai.fallback_answer()
+
+        return MeetingAnswer(answer=answer)

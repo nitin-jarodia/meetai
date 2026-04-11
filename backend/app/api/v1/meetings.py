@@ -12,13 +12,17 @@ from app.schemas.meeting import (
     AudioUploadResponse,
     MeetingCreate,
     MeetingDetail,
+    MeetingQuestionRequest,
+    MeetingQuestionResponse,
     MeetingOut,
 )
 from app.services.ai_service import AIService, get_ai_service
 from app.services.meeting_service import (
     MeetingAccessDeniedError,
+    MeetingAnswer,
     MeetingNotFoundError,
     MeetingService,
+    TranscriptNotFoundError,
 )
 from app.services.transcription_service import TranscriptionError
 
@@ -59,6 +63,41 @@ async def get_meeting(
     if not detail:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found")
     return detail
+
+
+@router.post(
+    "/{meeting_id}/ask",
+    response_model=MeetingQuestionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def ask_meeting_question(
+    meeting_id: uuid.UUID,
+    body: MeetingQuestionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    ai: AIService = Depends(get_ai_service),
+):
+    service = MeetingService(db)
+    try:
+        result: MeetingAnswer = await service.ask_meeting_question(
+            meeting_id, current_user, body.question, ai
+        )
+    except MeetingNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Meeting not found",
+        ) from None
+    except MeetingAccessDeniedError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed to access this meeting",
+        ) from None
+    except TranscriptNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No transcript found for this meeting",
+        ) from None
+    return MeetingQuestionResponse(answer=result.answer)
 
 
 @router.post(

@@ -1,5 +1,6 @@
 "use client";
 
+import type { FormEvent } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -20,6 +21,12 @@ export default function MeetingRoomPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+  const [qaHistory, setQaHistory] = useState<
+    Array<{ question: string; answer: string }>
+  >([]);
   const [lastUpload, setLastUpload] = useState<{
     transcript: string;
     summary: string;
@@ -63,6 +70,35 @@ export default function MeetingRoomPage() {
       ws.close();
     };
   }, [id, rawToken]);
+
+  async function handleAskSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) return;
+
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion) {
+      setAskError("Please enter a question.");
+      return;
+    }
+
+    setAsking(true);
+    setAskError(null);
+    try {
+      const result = await meetingsApi.ask(token, id, trimmedQuestion);
+      setQaHistory((prev) => [
+        {
+          question: trimmedQuestion,
+          answer: result.answer,
+        },
+        ...prev,
+      ]);
+      setQuestion("");
+    } catch (err) {
+      setAskError(err instanceof Error ? err.message : "Failed to get answer");
+    } finally {
+      setAsking(false);
+    }
+  }
 
   if (!token) {
     return (
@@ -210,6 +246,62 @@ export default function MeetingRoomPage() {
                   </div>
                 </div>
               )}
+            </section>
+
+            <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-sm font-medium text-slate-800">Ask AI about this meeting</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Ask a question using the latest available transcript for this meeting.
+              </p>
+              <form className="mt-4 space-y-3" onSubmit={handleAskSubmit}>
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <input
+                    type="text"
+                    value={question}
+                    onChange={(e) => {
+                      setQuestion(e.target.value);
+                      if (askError) setAskError(null);
+                    }}
+                    placeholder="Ask anything about this meeting..."
+                    disabled={asking}
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-400 focus:border-brand-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={asking}
+                    className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {asking ? "Asking…" : "Ask AI"}
+                  </button>
+                </div>
+                {askError && (
+                  <p className="text-sm text-red-600" role="alert">
+                    {askError}
+                  </p>
+                )}
+              </form>
+
+              {qaHistory.length > 0 ? (
+                <div className="mt-6 space-y-3 border-t border-slate-100 pt-4">
+                  {qaHistory.map((item, index) => (
+                    <div
+                      key={`${item.question}-${index}`}
+                      className="rounded-md border border-slate-100 bg-slate-50 p-4"
+                    >
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Question
+                      </p>
+                      <p className="mt-1 text-sm text-slate-800">{item.question}</p>
+                      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                        Answer
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                        {item.answer}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </section>
 
             <section>

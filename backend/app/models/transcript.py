@@ -18,6 +18,7 @@ class Transcript(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     transcript_text: Mapped[str] = mapped_column(Text, nullable=False)
+    cleaned_transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_points: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     action_items: Mapped[list[dict[str, str | None]]] = mapped_column(

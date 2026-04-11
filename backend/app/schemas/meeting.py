@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.user import UserOut
 
@@ -64,3 +64,18 @@ class AudioUploadResponse(BaseModel):
     summary: str
     key_points: list[str] = Field(default_factory=list)
     action_items: list[ActionItemOut] = Field(default_factory=list)
+
+
+class MeetingQuestionRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def _strip_question(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return value.strip()
+
+
+class MeetingQuestionResponse(BaseModel):
+    answer: str

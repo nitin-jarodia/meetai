@@ -35,6 +35,10 @@ def apply_transcript_storage_columns(connection: Connection) -> None:
             connection.execute(
                 text("ALTER TABLE transcripts ADD COLUMN transcript_text TEXT")
             )
+        if "cleaned_transcript" not in cols:
+            connection.execute(
+                text("ALTER TABLE transcripts ADD COLUMN cleaned_transcript TEXT")
+            )
         if "key_points" not in cols:
             connection.execute(
                 text(
@@ -55,6 +59,11 @@ def apply_transcript_storage_columns(connection: Connection) -> None:
         )
         connection.execute(
             text("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS transcript_text TEXT")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS cleaned_transcript TEXT"
+            )
         )
         connection.execute(
             text(
@@ -80,6 +89,17 @@ def apply_transcript_storage_columns(connection: Connection) -> None:
                 SET transcript_text = content
                 WHERE (transcript_text IS NULL OR transcript_text = '')
                   AND content IS NOT NULL
+                """
+            )
+        )
+    if "cleaned_transcript" in cols and "transcript_text" in cols:
+        connection.execute(
+            text(
+                """
+                UPDATE transcripts
+                SET cleaned_transcript = transcript_text
+                WHERE (cleaned_transcript IS NULL OR cleaned_transcript = '')
+                  AND transcript_text IS NOT NULL
                 """
             )
         )

@@ -18,6 +18,10 @@ class SummaryGenerationError(Exception):
     """Raised when Groq is unavailable or returns an invalid summary."""
 
 
+class QuestionAnsweringError(Exception):
+    """Raised when the LLM cannot answer a transcript question."""
+
+
 class ActionItem(BaseModel):
     task: str = Field(min_length=1)
     assigned_to: str | None = None
@@ -54,6 +58,7 @@ class MeetingAnalysis(BaseModel):
 
 _SENT_END = re.compile(r"(?<=[。！？!?\.])\s*")
 _TOKEN = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+_QA_MAX_CHARS = 5000
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -157,6 +162,11 @@ class LLMProvider(ABC):
     def generate_summary(self, text: str) -> str:
         return self.generate_analysis(text).summary
 
+    @abstractmethod
+    def answer_question(self, transcript: str, question: str) -> str:
+        """Answer a question using only transcript content."""
+        raise NotImplementedError
+
 
 class GroqProvider(LLMProvider):
     def __init__(self, api_key: str, model: str | None = None):
@@ -201,12 +211,59 @@ class GroqProvider(LLMProvider):
             raise SummaryGenerationError("Groq returned an empty summary.")
         return _parse_analysis_response(choice or "")
 
+    def answer_question(self, transcript: str, question: str) -> str:
+        if not transcript.strip():
+            raise QuestionAnsweringError("No transcript available for question answering.")
+        if not question.strip():
+            raise QuestionAnsweringError("No question provided.")
+        if not self._client:
+            raise QuestionAnsweringError("Groq API key is not configured.")
+
+        context = transcript.strip()
+        if len(context) > _QA_MAX_CHARS:
+            context = (
+                "[Transcript truncated to the most recent meeting content]\n"
+                f"{context[-_QA_MAX_CHARS:]}"
+            )
+
+        prompt = (
+            "You are an AI assistant analyzing a meeting transcript.\n\n"
+            "Rules:\n\n"
+            "* Answer ONLY from the transcript\n"
+            "* Do NOT make assumptions\n"
+            "* If answer is not present, respond exactly:\n"
+            "  'Not mentioned in the meeting'\n"
+            "* Keep answer concise and clear\n\n"
+            f"Transcript:\n{context}\n\n"
+            f"Question:\n{question.strip()}\n"
+        )
+
+        try:
+            chat = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=256,
+            )
+        except Exception as e:
+            raise QuestionAnsweringError(f"Groq API request failed: {e}") from e
+
+        choice = (chat.choices[0].message.content or "").strip()
+        if not choice:
+            raise QuestionAnsweringError("Groq returned an empty answer.")
+        return choice
+
 
 class OpenAIProviderStub(LLMProvider):
     """Placeholder for future OpenAI or other compatible APIs."""
 
     def generate_analysis(self, text: str) -> MeetingAnalysis:
         raise SummaryGenerationError(
+            "OpenAI provider is not implemented; use Groq (set GROQ_API_KEY)."
+        )
+
+    def answer_question(self, transcript: str, question: str) -> str:
+        raise QuestionAnsweringError(
             "OpenAI provider is not implemented; use Groq (set GROQ_API_KEY)."
         )
 
@@ -231,6 +288,12 @@ class AIService:
 
     def fallback_analysis(self, text: str) -> MeetingAnalysis:
         return _local_fallback_analysis(text)
+
+    def answer_question(self, transcript: str, question: str) -> str:
+        return self._provider.answer_question(transcript, question)
+
+    def fallback_answer(self) -> str:
+        return "AI is temporarily unavailable. Please try again."
 
 
 def get_ai_service() -> AIService:
