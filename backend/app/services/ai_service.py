@@ -22,6 +22,10 @@ class QuestionAnsweringError(Exception):
     """Raised when the LLM cannot answer a transcript question."""
 
 
+class TranscriptCleanupError(Exception):
+    """Raised when the LLM cannot clean a transcript."""
+
+
 class ActionItem(BaseModel):
     task: str = Field(min_length=1)
     assigned_to: str | None = None
@@ -163,6 +167,11 @@ class LLMProvider(ABC):
         return self.generate_analysis(text).summary
 
     @abstractmethod
+    def clean_transcript(self, text: str) -> str:
+        """Return a cleaned transcript that preserves meaning."""
+        raise NotImplementedError
+
+    @abstractmethod
     def answer_question(self, transcript: str, question: str) -> str:
         """Answer a question using only transcript content."""
         raise NotImplementedError
@@ -210,6 +219,40 @@ class GroqProvider(LLMProvider):
         if not (choice or "").strip():
             raise SummaryGenerationError("Groq returned an empty summary.")
         return _parse_analysis_response(choice or "")
+
+    def clean_transcript(self, text: str) -> str:
+        if not text.strip():
+            raise TranscriptCleanupError("No transcript text to clean.")
+        if not self._client:
+            return text
+
+        prompt = (
+            "You are an AI assistant.\n\n"
+            "Clean the following meeting transcript:\n\n"
+            "* Fix spelling mistakes\n"
+            "* Fix grammar\n"
+            "* Improve clarity\n"
+            "* Remove obvious repeated phrases\n"
+            "* Do NOT change meaning\n"
+            "* Do NOT remove important information\n\n"
+            "Return only the cleaned transcript.\n\n"
+            f"Transcript:\n{text[:12000]}\n"
+        )
+
+        try:
+            chat = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=2048,
+            )
+        except Exception as e:
+            raise TranscriptCleanupError(f"Groq API request failed: {e}") from e
+
+        choice = (chat.choices[0].message.content or "").strip()
+        if not choice:
+            raise TranscriptCleanupError("Groq returned an empty cleaned transcript.")
+        return choice
 
     def answer_question(self, transcript: str, question: str) -> str:
         if not transcript.strip():
@@ -262,6 +305,11 @@ class OpenAIProviderStub(LLMProvider):
             "OpenAI provider is not implemented; use Groq (set GROQ_API_KEY)."
         )
 
+    def clean_transcript(self, text: str) -> str:
+        raise TranscriptCleanupError(
+            "OpenAI provider is not implemented; use Groq (set GROQ_API_KEY)."
+        )
+
     def answer_question(self, transcript: str, question: str) -> str:
         raise QuestionAnsweringError(
             "OpenAI provider is not implemented; use Groq (set GROQ_API_KEY)."
@@ -288,6 +336,12 @@ class AIService:
 
     def fallback_analysis(self, text: str) -> MeetingAnalysis:
         return _local_fallback_analysis(text)
+
+    def clean_transcript(self, text: str) -> str:
+        return self._provider.clean_transcript(text)
+
+    def fallback_clean_transcript(self, text: str) -> str:
+        return text
 
     def answer_question(self, transcript: str, question: str) -> str:
         return self._provider.answer_question(transcript, question)

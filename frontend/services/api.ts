@@ -120,6 +120,7 @@ export type MeetingDetail = Meeting & {
   transcripts: Array<{
     id: string;
     transcript_text: string;
+    cleaned_transcript?: string | null;
     summary?: string | null;
     key_points: string[];
     action_items: ActionItem[];
@@ -174,8 +175,26 @@ export const meetingsApi = {
     uploadMeetingAudio(token, meetingId, file),
 };
 
+export const transcriptsApi = {
+  update: (token: string, transcriptId: string, cleanedTranscript: string) =>
+    apiRequest<TranscriptUpdateResult>(`/api/v1/transcripts/${transcriptId}`, {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ cleaned_transcript: cleanedTranscript }),
+    }),
+  regenerate: (token: string, transcriptId: string) =>
+    apiRequest<TranscriptRegenerateResult>(
+      `/api/v1/transcripts/${transcriptId}/regenerate`,
+      {
+        method: "POST",
+        token,
+      }
+    ),
+};
+
 export type AudioUploadResult = {
   transcript: string;
+  cleaned_transcript: string;
   summary: string;
   key_points: string[];
   action_items: ActionItem[];
@@ -183,6 +202,21 @@ export type AudioUploadResult = {
 
 export type MeetingQuestionResult = {
   answer: string;
+};
+
+export type TranscriptUpdateResult = {
+  message: string;
+};
+
+export type TranscriptRegenerateResult = {
+  id: string;
+  transcript_text: string;
+  cleaned_transcript?: string | null;
+  summary?: string | null;
+  key_points: string[];
+  action_items: ActionItem[];
+  segment_index: number | null;
+  created_at: string;
 };
 
 async function uploadMeetingAudio(

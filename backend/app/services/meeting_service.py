@@ -28,6 +28,7 @@ from app.services.ai_service import (
     MeetingAnalysis,
     QuestionAnsweringError,
     SummaryGenerationError,
+    TranscriptCleanupError,
 )
 from app.services.transcription_service import transcribe_audio, TranscriptionError
 
@@ -47,6 +48,7 @@ class TranscriptNotFoundError(Exception):
 @dataclass(slots=True)
 class ProcessedAudioUpload:
     transcript: str
+    cleaned_transcript: str
     summary: str
     key_points: list[str]
     action_items: list[dict[str, str | None]]
@@ -148,6 +150,12 @@ class MeetingService:
         except SummaryGenerationError:
             return ai.fallback_analysis(transcript_text)
 
+    async def _clean_transcript(self, transcript_text: str, ai: AIService) -> str:
+        try:
+            return await asyncio.to_thread(ai.clean_transcript, transcript_text)
+        except TranscriptCleanupError:
+            return ai.fallback_clean_transcript(transcript_text)
+
     @staticmethod
     def _select_transcript_source(transcript: Transcript) -> str:
         return (
@@ -171,7 +179,8 @@ class MeetingService:
         """
         meeting = await self._get_meeting_for_user(meeting_id, user)
         transcript_text = await asyncio.to_thread(transcribe_audio, str(saved_file_path))
-        analysis = await self._analyze_transcript(transcript_text, ai)
+        cleaned_transcript = await self._clean_transcript(transcript_text, ai)
+        analysis = await self._analyze_transcript(cleaned_transcript, ai)
         action_items = [item.model_dump() for item in analysis.action_items]
         now = datetime.now(timezone.utc)
         await self.meetings.add_transcript(
@@ -179,7 +188,7 @@ class MeetingService:
                 meeting_id=meeting.id,
                 content=transcript_text,
                 transcript_text=transcript_text,
-                cleaned_transcript=transcript_text,
+                cleaned_transcript=cleaned_transcript,
                 summary=analysis.summary,
                 key_points=analysis.key_points,
                 action_items=action_items,
@@ -189,6 +198,7 @@ class MeetingService:
         )
         return ProcessedAudioUpload(
             transcript=transcript_text,
+            cleaned_transcript=cleaned_transcript,
             summary=analysis.summary,
             key_points=analysis.key_points,
             action_items=action_items,

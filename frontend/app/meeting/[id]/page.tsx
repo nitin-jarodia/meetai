@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { getWebSocketBaseUrl } from "@/lib/publicApi";
-import { meetingsApi, type MeetingDetail } from "@/services/api";
+import { meetingsApi, transcriptsApi, type MeetingDetail } from "@/services/api";
 import { useAuthStore } from "@/store/authStore";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 
@@ -21,22 +21,23 @@ export default function MeetingRoomPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
+  const [editedTranscriptText, setEditedTranscriptText] = useState("");
+  const [savingTranscriptId, setSavingTranscriptId] = useState<string | null>(null);
+  const [regeneratingTranscriptId, setRegeneratingTranscriptId] = useState<string | null>(
+    null
+  );
+  const [transcriptActionError, setTranscriptActionError] = useState<string | null>(null);
+  const [transcriptActionMessage, setTranscriptActionMessage] = useState<string | null>(
+    null
+  );
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   const [qaHistory, setQaHistory] = useState<
     Array<{ question: string; answer: string }>
   >([]);
-  const [lastUpload, setLastUpload] = useState<{
-    transcript: string;
-    summary: string;
-    key_points: string[];
-    action_items: Array<{
-      task: string;
-      assigned_to: string | null;
-      deadline: string | null;
-    }>;
-  } | null>(null);
 
   useEffect(() => {
     if (!token || !id) return;
@@ -99,6 +100,224 @@ export default function MeetingRoomPage() {
       setAsking(false);
     }
   }
+
+  function updateTranscriptInDetail(
+    transcriptId: string,
+    updates: Partial<MeetingDetail["transcripts"][number]>
+  ) {
+    setDetail((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        transcripts: prev.transcripts.map((transcript) =>
+          transcript.id === transcriptId ? { ...transcript, ...updates } : transcript
+        ),
+      };
+    });
+  }
+
+  function formatTranscriptDate(value: string) {
+    return new Date(value).toLocaleString();
+  }
+
+  function renderTranscriptCard(
+    transcript: MeetingDetail["transcripts"][number],
+    options?: { compact?: boolean }
+  ) {
+    const compact = options?.compact ?? false;
+
+    return (
+      <div className="rounded border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-medium text-slate-800">
+              {compact ? "Previous transcript" : "Latest transcript"}
+            </h3>
+            <p className="text-xs text-slate-400">
+              Updated {formatTranscriptDate(transcript.created_at)}
+            </p>
+          </div>
+        </div>
+
+        {transcript.summary ? (
+          <div className="mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+              Summary
+            </p>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
+              {transcript.summary}
+            </p>
+          </div>
+        ) : null}
+
+        {transcript.key_points.length > 0 ? (
+          <div className="mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Key points
+            </p>
+            <ul className="mt-1 space-y-1 text-sm text-slate-700">
+              {transcript.key_points.map((point, index) => (
+                <li key={`${transcript.id}-point-${index}`}>• {point}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {transcript.action_items.length > 0 ? (
+          <div className="mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Action items
+            </p>
+            <ul className="mt-1 space-y-1 text-sm text-slate-700">
+              {transcript.action_items.map((item, index) => (
+                <li key={`${transcript.id}-action-${index}`}>
+                  <span className="font-medium text-slate-800">{item.task}</span>
+                  {item.assigned_to ? ` — ${item.assigned_to}` : ""}
+                  {item.deadline ? ` (Due: ${item.deadline})` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Cleaned transcript
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {editingTranscriptId === transcript.id ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    disabled={savingTranscriptId === transcript.id}
+                    className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveTranscript(transcript.id)}
+                    disabled={savingTranscriptId === transcript.id}
+                    className="rounded-md bg-brand-600 px-3 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {savingTranscriptId === transcript.id ? "Saving…" : "Save"}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleStartEdit(
+                      transcript.id,
+                      transcript.cleaned_transcript ?? transcript.transcript_text
+                    )
+                  }
+                  className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Edit
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleRegenerateTranscript(transcript.id)}
+                disabled={regeneratingTranscriptId === transcript.id}
+                className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {regeneratingTranscriptId === transcript.id
+                  ? "Regenerating…"
+                  : "Regenerate Summary"}
+              </button>
+            </div>
+          </div>
+          <textarea
+            rows={compact ? 4 : 8}
+            value={
+              editingTranscriptId === transcript.id
+                ? editedTranscriptText
+                : transcript.cleaned_transcript ?? transcript.transcript_text
+            }
+            onChange={(e) => setEditedTranscriptText(e.target.value)}
+            disabled={editingTranscriptId !== transcript.id}
+            className="mt-2 w-full rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 disabled:cursor-text disabled:opacity-100"
+          />
+        </div>
+
+        <details className="rounded-md border border-slate-200 bg-slate-50 p-3">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Raw transcript
+          </summary>
+          <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
+            {transcript.transcript_text}
+          </p>
+        </details>
+      </div>
+    );
+  }
+
+  function handleStartEdit(transcriptId: string, currentText: string) {
+    setEditingTranscriptId(transcriptId);
+    setEditedTranscriptText(currentText);
+    setTranscriptActionError(null);
+    setTranscriptActionMessage(null);
+  }
+
+  function handleCancelEdit() {
+    setEditingTranscriptId(null);
+    setEditedTranscriptText("");
+    setTranscriptActionError(null);
+  }
+
+  async function handleSaveTranscript(transcriptId: string) {
+    if (!token) return;
+    const trimmedText = editedTranscriptText.trim();
+    if (!trimmedText) {
+      setTranscriptActionError("Transcript cannot be empty.");
+      return;
+    }
+
+    setSavingTranscriptId(transcriptId);
+    setTranscriptActionError(null);
+    setTranscriptActionMessage(null);
+    try {
+      const result = await transcriptsApi.update(token, transcriptId, trimmedText);
+      updateTranscriptInDetail(transcriptId, { cleaned_transcript: trimmedText });
+      setEditingTranscriptId(null);
+      setEditedTranscriptText("");
+      setTranscriptActionMessage(result.message);
+    } catch (err) {
+      setTranscriptActionError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSavingTranscriptId(null);
+    }
+  }
+
+  async function handleRegenerateTranscript(transcriptId: string) {
+    if (!token) return;
+    setRegeneratingTranscriptId(transcriptId);
+    setTranscriptActionError(null);
+    setTranscriptActionMessage(null);
+    try {
+      const result = await transcriptsApi.regenerate(token, transcriptId);
+      updateTranscriptInDetail(transcriptId, {
+        cleaned_transcript: result.cleaned_transcript,
+        summary: result.summary,
+        key_points: result.key_points,
+        action_items: result.action_items,
+      });
+      setTranscriptActionMessage("Summary regenerated successfully.");
+    } catch (err) {
+      setTranscriptActionError(
+        err instanceof Error ? err.message : "Failed to regenerate summary"
+      );
+    } finally {
+      setRegeneratingTranscriptId(null);
+    }
+  }
+
+  const latestTranscript = detail?.transcripts[0] ?? null;
+  const olderTranscripts = detail?.transcripts.slice(1) ?? [];
 
   if (!token) {
     return (
@@ -167,10 +386,12 @@ export default function MeetingRoomPage() {
                     if (!audioFile || !token) return;
                     setUploading(true);
                     setUploadError(null);
-                    setLastUpload(null);
+                    setUploadMessage(null);
                     try {
-                      const result = await meetingsApi.uploadAudio(token, id, audioFile);
-                      setLastUpload(result);
+                      await meetingsApi.uploadAudio(token, id, audioFile);
+                      setUploadMessage(
+                        "Audio processed successfully. The latest transcript has been updated below."
+                      );
                       const refreshed = await meetingsApi.get(token, id);
                       setDetail(refreshed);
                     } catch (err) {
@@ -190,61 +411,10 @@ export default function MeetingRoomPage() {
                   {uploadError}
                 </p>
               )}
-              {lastUpload && (
-                <div className="mt-6 space-y-4 border-t border-slate-100 pt-4">
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      AI summary
-                    </h3>
-                    <div className="mt-2 whitespace-pre-wrap rounded-md bg-emerald-50 p-3 text-sm text-slate-800">
-                      {lastUpload.summary}
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Key points
-                    </h3>
-                    {lastUpload.key_points.length === 0 ? (
-                      <p className="mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-500">
-                        No key points extracted.
-                      </p>
-                    ) : (
-                      <ul className="mt-2 space-y-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
-                        {lastUpload.key_points.map((point, index) => (
-                          <li key={`${point}-${index}`}>• {point}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Action items
-                    </h3>
-                    {lastUpload.action_items.length === 0 ? (
-                      <p className="mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-500">
-                        No action items extracted.
-                      </p>
-                    ) : (
-                      <ul className="mt-2 space-y-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
-                        {lastUpload.action_items.map((item, index) => (
-                          <li key={`${item.task}-${index}`}>
-                            <span className="font-medium text-slate-800">{item.task}</span>
-                            {item.assigned_to ? ` — ${item.assigned_to}` : ""}
-                            {item.deadline ? ` (Due: ${item.deadline})` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Transcript
-                    </h3>
-                    <p className="mt-2 whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm text-slate-700">
-                      {lastUpload.transcript}
-                    </p>
-                  </div>
-                </div>
+              {uploadMessage && (
+                <p className="mt-4 rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+                  {uploadMessage}
+                </p>
               )}
             </section>
 
@@ -317,65 +487,35 @@ export default function MeetingRoomPage() {
             </section>
 
             <section>
-              <h2 className="text-sm font-medium text-slate-800">Transcripts</h2>
-              {detail.transcripts.length === 0 ? (
+              <h2 className="text-sm font-medium text-slate-800">Transcript Workspace</h2>
+              {transcriptActionMessage && (
+                <p className="mt-2 rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+                  {transcriptActionMessage}
+                </p>
+              )}
+              {transcriptActionError && (
+                <p className="mt-2 rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
+                  {transcriptActionError}
+                </p>
+              )}
+              {!latestTranscript ? (
                 <p className="mt-2 text-sm text-slate-500">No segments stored yet.</p>
               ) : (
-                <ul className="mt-2 space-y-3 text-sm">
-                  {detail.transcripts.map((t) => (
-                    <li
-                      key={t.id}
-                      className="rounded border border-slate-100 bg-white p-3 shadow-sm"
-                    >
-                      {t.summary ? (
-                        <div className="mb-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                            Summary
-                          </p>
-                          <p className="mt-1 whitespace-pre-wrap text-slate-800">
-                            {t.summary}
-                          </p>
-                        </div>
-                      ) : null}
-                      {t.key_points.length > 0 ? (
-                        <div className="mb-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Key points
-                          </p>
-                          <ul className="mt-1 space-y-1 text-slate-700">
-                            {t.key_points.map((point, index) => (
-                              <li key={`${t.id}-point-${index}`}>• {point}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-                      {t.action_items.length > 0 ? (
-                        <div className="mb-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Action items
-                          </p>
-                          <ul className="mt-1 space-y-1 text-slate-700">
-                            {t.action_items.map((item, index) => (
-                              <li key={`${t.id}-action-${index}`}>
-                                <span className="font-medium text-slate-800">{item.task}</span>
-                                {item.assigned_to ? ` — ${item.assigned_to}` : ""}
-                                {item.deadline ? ` (Due: ${item.deadline})` : ""}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Transcript
-                        </p>
-                        <p className="mt-1 whitespace-pre-wrap text-slate-700">
-                          {t.transcript_text}
-                        </p>
+                <div className="mt-3 space-y-4">
+                  {renderTranscriptCard(latestTranscript)}
+                  {olderTranscripts.length > 0 ? (
+                    <details className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                      <summary className="cursor-pointer text-sm font-medium text-slate-800">
+                        Previous transcripts ({olderTranscripts.length})
+                      </summary>
+                      <div className="mt-4 space-y-3">
+                        {olderTranscripts.map((transcript) => (
+                          <div key={transcript.id}>{renderTranscriptCard(transcript, { compact: true })}</div>
+                        ))}
                       </div>
-                    </li>
-                  ))}
-                </ul>
+                    </details>
+                  ) : null}
+                </div>
               )}
             </section>
           </>

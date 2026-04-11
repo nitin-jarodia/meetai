@@ -146,6 +146,7 @@ async def upload_meeting_audio(
             ) from e
         return AudioUploadResponse(
             transcript=result.transcript,
+            cleaned_transcript=result.cleaned_transcript,
             summary=result.summary,
             key_points=result.key_points,
             action_items=result.action_items,
