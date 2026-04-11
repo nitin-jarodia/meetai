@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,72 @@ class TranscriptionError(Exception):
 
 
 _model_cache: dict[str, Any] = {}
+_ffmpeg_path_configured = False
+
+
+def _ensure_ffmpeg_on_path() -> None:
+    """
+    Whisper decodes audio by spawning `ffmpeg`. On Windows, a missing ffmpeg causes
+    WinError 2 ("The system cannot find the file specified"). Prefer a bundled
+    binary from imageio-ffmpeg unless FFMPEG_PATH points at ffmpeg or its folder.
+    """
+    global _ffmpeg_path_configured
+    if _ffmpeg_path_configured:
+        return
+
+    raw = (settings.ffmpeg_path or "").strip()
+    if raw:
+        p = Path(raw)
+        if p.is_file():
+            bin_dir = str(p.resolve().parent)
+        elif p.is_dir():
+            bin_dir = str(p.resolve())
+        else:
+            raise TranscriptionError(
+                f"FFMPEG_PATH is set but not found: {raw}. "
+                "Set it to ffmpeg.exe or the folder that contains it, or leave it empty to use the bundled ffmpeg."
+            )
+        os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+        _ffmpeg_path_configured = True
+        return
+
+    try:
+        import imageio_ffmpeg
+
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        raise TranscriptionError(
+            "FFmpeg is required for Whisper to decode audio. Install imageio-ffmpeg "
+            "(included in requirements) or install FFmpeg and add it to PATH, "
+            f"or set FFMPEG_PATH. Details: {e}"
+        ) from e
+
+    resolved = Path(exe).resolve()
+    # Whisper's subprocess uses the command name "ffmpeg". On Windows, imageio-ffmpeg
+    # ships a versioned filename (e.g. ffmpeg-win-x86_64-v7.1.exe), so PATH alone
+    # does not help — we copy it to ffmpeg.exe in a small cache dir and prepend that.
+    if sys.platform == "win32" and resolved.name.lower() != "ffmpeg.exe":
+        cache_dir = Path(__file__).resolve().parents[2] / ".cache" / "ffmpeg"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise TranscriptionError(
+                f"Could not create ffmpeg cache directory {cache_dir}: {e}"
+            ) from e
+        shim = cache_dir / "ffmpeg.exe"
+        try:
+            if not shim.is_file():
+                shutil.copy2(resolved, shim)
+        except OSError as e:
+            raise TranscriptionError(
+                f"Could not copy bundled ffmpeg to {shim}: {e}"
+            ) from e
+        bin_dir = str(cache_dir)
+    else:
+        bin_dir = str(resolved.parent)
+
+    os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+    _ffmpeg_path_configured = True
 
 
 def _load_whisper_model(model_name: str) -> Any:
@@ -32,6 +101,8 @@ def transcribe_audio(file_path: str | Path) -> str:
     path = Path(file_path)
     if not path.is_file():
         raise TranscriptionError(f"Audio file not found: {path}")
+
+    _ensure_ffmpeg_on_path()
 
     try:
         import whisper  # noqa: F401 — optional dependency

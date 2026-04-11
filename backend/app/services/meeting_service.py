@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,9 +15,15 @@ from app.models.participant import Participant
 from app.models.transcript import Transcript
 from app.models.user import User
 from app.repositories.meeting_repository import MeetingRepository
-from app.schemas.meeting import MeetingCreate, MeetingDetail, MeetingOut, ParticipantBrief, TranscriptBrief
+from app.schemas.meeting import (
+    MeetingCreate,
+    MeetingDetail,
+    MeetingOut,
+    ParticipantBrief,
+    TranscriptBrief,
+)
 from app.schemas.user import UserOut
-from app.services.ai_service import AIService
+from app.services.ai_service import AIService, MeetingAnalysis, SummaryGenerationError
 from app.services.transcription_service import transcribe_audio, TranscriptionError
 
 
@@ -26,6 +33,14 @@ class MeetingNotFoundError(Exception):
 
 class MeetingAccessDeniedError(Exception):
     """Raised when the user is not the host or a participant."""
+
+
+@dataclass(slots=True)
+class ProcessedAudioUpload:
+    transcript: str
+    summary: str
+    key_points: list[str]
+    action_items: list[dict[str, str | None]]
 
 
 class MeetingService:
@@ -111,28 +126,47 @@ class MeetingService:
             return meeting
         raise MeetingAccessDeniedError()
 
+    async def _analyze_transcript(
+        self, transcript_text: str, ai: AIService
+    ) -> MeetingAnalysis:
+        try:
+            return await asyncio.to_thread(ai.generate_analysis, transcript_text)
+        except SummaryGenerationError:
+            return ai.fallback_analysis(transcript_text)
+
     async def process_audio_upload(
         self,
         meeting_id: uuid.UUID,
         user: User,
         saved_file_path: Path,
         ai: AIService,
-    ) -> tuple[str, str]:
+    ) -> ProcessedAudioUpload:
         """
-        Transcribe audio, summarize with Groq, persist Transcript, return (transcript, summary).
+        Transcribe audio, generate structured analysis, persist Transcript, and return
+        the structured API payload.
 
-        Raises MeetingNotFoundError, MeetingAccessDeniedError, TranscriptionError, SummaryGenerationError.
+        Raises MeetingNotFoundError, MeetingAccessDeniedError, TranscriptionError.
         """
         meeting = await self._get_meeting_for_user(meeting_id, user)
         transcript_text = await asyncio.to_thread(transcribe_audio, str(saved_file_path))
-        summary = await asyncio.to_thread(ai.generate_summary, transcript_text)
+        analysis = await self._analyze_transcript(transcript_text, ai)
+        action_items = [item.model_dump() for item in analysis.action_items]
         now = datetime.now(timezone.utc)
         await self.meetings.add_transcript(
             Transcript(
                 meeting_id=meeting.id,
                 content=transcript_text,
+                transcript_text=transcript_text,
+                summary=analysis.summary,
+                key_points=analysis.key_points,
+                action_items=action_items,
                 segment_index=None,
                 created_at=now,
             )
         )
-        return transcript_text, summary
+        return ProcessedAudioUpload(
+            transcript=transcript_text,
+            summary=analysis.summary,
+            key_points=analysis.key_points,
+            action_items=action_items,
+        )

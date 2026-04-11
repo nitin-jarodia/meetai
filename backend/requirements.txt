@@ -18,3 +18,5 @@ groq==0.13.1
 
 # Local Whisper (pulls torch; use tiny/base for lighter installs)
 openai-whisper>=20231117
+# Bundled ffmpeg binary so Whisper can decode MP3/WAV on Windows without a system install
+imageio-ffmpeg>=0.5.1

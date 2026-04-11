@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.models.transcript import Transcript
 
 
 class Meeting(Base):
@@ -26,6 +27,9 @@ class Meeting(Base):
     participants: Mapped[list["Participant"]] = relationship(
         "Participant", back_populates="meeting", cascade="all, delete-orphan"
     )
-    transcripts: Mapped[list["Transcript"]] = relationship(
-        "Transcript", back_populates="meeting", cascade="all, delete-orphan"
+    transcripts: Mapped[list[Transcript]] = relationship(
+        Transcript,
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        order_by=Transcript.created_at.desc(),
     )

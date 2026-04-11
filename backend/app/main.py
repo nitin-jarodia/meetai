@@ -9,12 +9,14 @@ import app.models  # noqa: F401 — register SQLAlchemy metadata
 from app.api.v1 import ai, auth, meetings, websocket as ws_routes
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.schema_patches import apply_transcript_storage_columns
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(apply_transcript_storage_columns)
     yield
     await engine.dispose()
 

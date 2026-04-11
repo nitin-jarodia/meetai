@@ -23,6 +23,12 @@ export default function MeetingRoomPage() {
   const [lastUpload, setLastUpload] = useState<{
     transcript: string;
     summary: string;
+    key_points: string[];
+    action_items: Array<{
+      task: string;
+      assigned_to: string | null;
+      deadline: string | null;
+    }>;
   } | null>(null);
 
   useEffect(() => {
@@ -160,6 +166,42 @@ export default function MeetingRoomPage() {
                   </div>
                   <div>
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Key points
+                    </h3>
+                    {lastUpload.key_points.length === 0 ? (
+                      <p className="mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-500">
+                        No key points extracted.
+                      </p>
+                    ) : (
+                      <ul className="mt-2 space-y-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                        {lastUpload.key_points.map((point, index) => (
+                          <li key={`${point}-${index}`}>• {point}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Action items
+                    </h3>
+                    {lastUpload.action_items.length === 0 ? (
+                      <p className="mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-500">
+                        No action items extracted.
+                      </p>
+                    ) : (
+                      <ul className="mt-2 space-y-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                        {lastUpload.action_items.map((item, index) => (
+                          <li key={`${item.task}-${index}`}>
+                            <span className="font-medium text-slate-800">{item.task}</span>
+                            {item.assigned_to ? ` — ${item.assigned_to}` : ""}
+                            {item.deadline ? ` (Due: ${item.deadline})` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Transcript
                     </h3>
                     <p className="mt-2 whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm text-slate-700">
@@ -187,10 +229,58 @@ export default function MeetingRoomPage() {
               {detail.transcripts.length === 0 ? (
                 <p className="mt-2 text-sm text-slate-500">No segments stored yet.</p>
               ) : (
-                <ul className="mt-2 space-y-2 text-sm">
+                <ul className="mt-2 space-y-3 text-sm">
                   {detail.transcripts.map((t) => (
-                    <li key={t.id} className="rounded border border-slate-100 p-2">
-                      {t.content}
+                    <li
+                      key={t.id}
+                      className="rounded border border-slate-100 bg-white p-3 shadow-sm"
+                    >
+                      {t.summary ? (
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            Summary
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap text-slate-800">
+                            {t.summary}
+                          </p>
+                        </div>
+                      ) : null}
+                      {t.key_points.length > 0 ? (
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Key points
+                          </p>
+                          <ul className="mt-1 space-y-1 text-slate-700">
+                            {t.key_points.map((point, index) => (
+                              <li key={`${t.id}-point-${index}`}>• {point}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {t.action_items.length > 0 ? (
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Action items
+                          </p>
+                          <ul className="mt-1 space-y-1 text-slate-700">
+                            {t.action_items.map((item, index) => (
+                              <li key={`${t.id}-action-${index}`}>
+                                <span className="font-medium text-slate-800">{item.task}</span>
+                                {item.assigned_to ? ` — ${item.assigned_to}` : ""}
+                                {item.deadline ? ` (Due: ${item.deadline})` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Transcript
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap text-slate-700">
+                          {t.transcript_text}
+                        </p>
+                      </div>
                     </li>
                   ))}
                 </ul>

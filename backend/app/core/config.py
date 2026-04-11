@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Audio upload + local Whisper (model: tiny, base, small, …)
     uploads_dir: str = "uploads"
     whisper_model: str = "base"
+    # Optional: path to ffmpeg.exe or its directory. Empty = use bundled ffmpeg (imageio-ffmpeg).
+    ffmpeg_path: str = ""
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Text, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -17,6 +17,12 @@ class Transcript(Base):
         Uuid(as_uuid=True), ForeignKey("meetings.id"), nullable=False, index=True
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    transcript_text: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_points: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    action_items: Mapped[list[dict[str, str | None]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     segment_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

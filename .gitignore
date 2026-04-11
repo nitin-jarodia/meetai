@@ -17,6 +17,9 @@ backend/meetai.db
 # Uploaded audio (temporary processing)
 backend/uploads/
 
+# Windows ffmpeg.exe shim for Whisper (copy of imageio-ffmpeg binary)
+backend/.cache/
+
 # Env
 .env
 .env.local

@@ -14,7 +14,7 @@ from app.schemas.meeting import (
     MeetingDetail,
     MeetingOut,
 )
-from app.services.ai_service import AIService, SummaryGenerationError, get_ai_service
+from app.services.ai_service import AIService, get_ai_service
 from app.services.meeting_service import (
     MeetingAccessDeniedError,
     MeetingNotFoundError,
@@ -73,7 +73,7 @@ async def upload_meeting_audio(
     current_user: User = Depends(get_current_user),
     ai: AIService = Depends(get_ai_service),
 ):
-    """Upload audio, transcribe with local Whisper, summarize with Groq, store transcript."""
+    """Upload audio, transcribe it, generate structured analysis, and store it."""
     contents = await file.read()
     if not contents:
         raise HTTPException(
@@ -89,9 +89,7 @@ async def upload_meeting_audio(
         dest.write_bytes(contents)
         service = MeetingService(db)
         try:
-            transcript, summary = await service.process_audio_upload(
-                meeting_id, current_user, dest, ai
-            )
+            result = await service.process_audio_upload(meeting_id, current_user, dest, ai)
         except MeetingNotFoundError:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -107,12 +105,12 @@ async def upload_meeting_audio(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=str(e),
             ) from e
-        except SummaryGenerationError as e:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=str(e),
-            ) from e
-        return AudioUploadResponse(transcript=transcript, summary=summary)
+        return AudioUploadResponse(
+            transcript=result.transcript,
+            summary=result.summary,
+            key_points=result.key_points,
+            action_items=result.action_items,
+        )
     finally:
         if dest is not None:
             try:

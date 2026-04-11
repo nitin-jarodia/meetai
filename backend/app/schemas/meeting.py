@@ -30,9 +30,18 @@ class ParticipantBrief(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ActionItemOut(BaseModel):
+    task: str
+    assigned_to: str | None = None
+    deadline: str | None = None
+
+
 class TranscriptBrief(BaseModel):
     id: uuid.UUID
-    content: str
+    transcript_text: str
+    summary: str | None = None
+    key_points: list[str] = Field(default_factory=list)
+    action_items: list[ActionItemOut] = Field(default_factory=list)
     segment_index: int | None
     created_at: datetime
 
@@ -53,3 +62,5 @@ class MeetingDetail(BaseModel):
 class AudioUploadResponse(BaseModel):
     transcript: str
     summary: str
+    key_points: list[str] = Field(default_factory=list)
+    action_items: list[ActionItemOut] = Field(default_factory=list)

@@ -97,6 +97,11 @@ export type User = {
   full_name: string | null;
   created_at: string;
 };
+export type ActionItem = {
+  task: string;
+  assigned_to: string | null;
+  deadline: string | null;
+};
 export type Meeting = {
   id: string;
   title: string;
@@ -114,7 +119,10 @@ export type MeetingDetail = Meeting & {
   }>;
   transcripts: Array<{
     id: string;
-    content: string;
+    transcript_text: string;
+    summary?: string | null;
+    key_points: string[];
+    action_items: ActionItem[];
     segment_index: number | null;
     created_at: string;
   }>;
@@ -160,7 +168,12 @@ export const meetingsApi = {
     uploadMeetingAudio(token, meetingId, file),
 };
 
-export type AudioUploadResult = { transcript: string; summary: string };
+export type AudioUploadResult = {
+  transcript: string;
+  summary: string;
+  key_points: string[];
+  action_items: ActionItem[];
+};
 
 async function uploadMeetingAudio(
   token: string,
