@@ -9,36 +9,37 @@ from fastapi import WebSocket, WebSocketDisconnect
 class ConnectionManager:
     def __init__(self) -> None:
         # meeting_id -> set of websockets
-        self._rooms: Dict[str, Set[WebSocket]] = {}
+        self._connections: Dict[str, Set[WebSocket]] = {}
+        self._rooms = self._connections
 
     async def connect(self, meeting_id: uuid.UUID, websocket: WebSocket) -> None:
         await websocket.accept()
         key = str(meeting_id)
-        if key not in self._rooms:
-            self._rooms[key] = set()
-        self._rooms[key].add(websocket)
+        if key not in self._connections:
+            self._connections[key] = set()
+        self._connections[key].add(websocket)
 
     def disconnect(self, meeting_id: uuid.UUID, websocket: WebSocket) -> None:
         key = str(meeting_id)
-        if key in self._rooms:
-            self._rooms[key].discard(websocket)
-            if not self._rooms[key]:
-                del self._rooms[key]
+        if key in self._connections:
+            self._connections[key].discard(websocket)
+            if not self._connections[key]:
+                del self._connections[key]
 
     @property
     def room_count(self) -> int:
-        return len(self._rooms)
+        return len(self._connections)
 
-    async def broadcast_json(self, meeting_id: uuid.UUID, payload: dict) -> None:
-        key = str(meeting_id)
-        sockets = list(self._rooms.get(key, set()))
+    async def broadcast_to_meeting(self, meeting_id: str, data: dict) -> None:
+        sockets = list(self._connections.get(meeting_id, set()))
         for websocket in sockets:
             try:
-                await websocket.send_json(payload)
+                await websocket.send_json(data)
             except WebSocketDisconnect:
-                self.disconnect(meeting_id, websocket)
-            except RuntimeError:
-                self.disconnect(meeting_id, websocket)
+                pass
+
+    async def broadcast_json(self, meeting_id: uuid.UUID, payload: dict) -> None:
+        await self.broadcast_to_meeting(str(meeting_id), payload)
 
 
 manager = ConnectionManager()

@@ -1,14 +1,17 @@
 import type { FormEvent } from "react";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
 
-type QAHistoryItem = {
+interface QAHistoryItem {
   id?: string;
   question: string;
   answer: string;
   asked_by?: string | null;
   created_at?: string;
-};
+}
 
-type QASectionProps = {
+interface QASectionProps {
   question: string;
   asking: boolean;
   error?: string | null;
@@ -16,7 +19,7 @@ type QASectionProps = {
   disabled?: boolean;
   onQuestionChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-};
+}
 
 export function QASection({
   question,
@@ -28,65 +31,56 @@ export function QASection({
   onSubmit,
 }: QASectionProps) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-          AI Q&amp;A
-        </p>
-        <h2 className="mt-1 text-lg font-semibold text-slate-900">Ask about this meeting</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Ask follow-up questions and get concise answers grounded in the transcript.
-        </p>
+    <Card className="space-y-4">
+      <div>
+        <p className="text-sm font-semibold text-text-primary">Ask a question</p>
+        <p className="mt-1 text-xs text-text-secondary">Ask follow-up questions grounded in the transcript.</p>
       </div>
 
       <form className="space-y-3" onSubmit={onSubmit}>
-        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <input
             type="text"
             value={question}
             onChange={(e) => onQuestionChange(e.target.value)}
             placeholder="Ask anything about this meeting..."
             disabled={asking || disabled}
-            className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand-500"
+            className="h-10 flex-1 rounded-md border border-background-border bg-background-surface px-3 text-sm text-text-primary placeholder:text-text-muted"
           />
-          <button
-            type="submit"
-            disabled={asking || disabled}
-            className="rounded-2xl bg-brand-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {asking ? "Thinking..." : "Ask AI"}
-          </button>
+          <Button type="submit" size="sm" loading={asking} disabled={disabled}>
+            {asking ? "Ask" : "Ask"}
+          </Button>
         </div>
 
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {error ? <p className="text-sm text-semantic-danger">{error}</p> : null}
       </form>
 
       {disabled ? (
-        <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5">
-          <p className="text-sm text-slate-500">
-            Upload a meeting transcript to start asking questions.
-          </p>
-        </div>
+        <EmptyState
+          icon="M5 12h14M12 5v14"
+          title="Transcript required"
+          description="Upload a meeting transcript to start asking questions."
+        />
       ) : history.length === 0 ? (
-        <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5">
-          <p className="text-sm text-slate-500">
-            No questions yet. Ask about decisions, deadlines, owners, or blockers.
-          </p>
-        </div>
+        <EmptyState
+          icon="M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16Zm0 11.2h.01M9.1 9.4a3 3 0 1 1 5.3 1.9c-.86.64-1.4 1.14-1.4 2.1"
+          title="No questions yet"
+          description="Ask about decisions, deadlines, owners, or blockers."
+        />
       ) : (
-        <div className="mt-5 space-y-4">
+        <div className="max-h-[300px] space-y-4 overflow-y-auto pr-1">
           {history.map((item, index) => (
             <div key={item.id ?? `${item.question}-${index}`} className="space-y-3">
               <div className="flex justify-end">
-                <div className="max-w-[85%] rounded-2xl bg-brand-600 px-4 py-3 text-sm text-white shadow-sm">
+                <div className="max-w-[85%] rounded-full bg-brand-primaryDim px-4 py-2 text-sm text-brand-primary">
                   {item.question}
                 </div>
               </div>
               <div className="flex justify-start">
-                <div className="max-w-[85%] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  <p>{item.answer}</p>
+                <div className="max-w-[85%] rounded-xl border border-background-border bg-background-elevated px-4 py-3 text-sm text-text-secondary">
+                  <p className="leading-6">{item.answer}</p>
                   {item.asked_by || item.created_at ? (
-                    <p className="mt-2 text-xs text-slate-400">
+                    <p className="mt-2 text-xs text-text-muted">
                       {item.asked_by ? `Asked by ${item.asked_by}` : null}
                       {item.asked_by && item.created_at ? " · " : null}
                       {item.created_at
@@ -100,6 +94,6 @@ export function QASection({
           ))}
         </div>
       )}
-    </section>
+    </Card>
   );
 }

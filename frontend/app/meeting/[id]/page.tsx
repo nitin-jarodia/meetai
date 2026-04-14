@@ -6,10 +6,19 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { ActionItemsList } from "@/components/meeting/ActionItemsList";
+import { LiveTranscriptBar } from "@/components/meeting/LiveTranscriptBar";
 import { QASection } from "@/components/meeting/QASection";
 import { SummaryCard } from "@/components/meeting/SummaryCard";
 import { TranscriptSection } from "@/components/meeting/TranscriptSection";
+import { Avatar } from "@/components/ui/Avatar";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { useLiveTranscription } from "@/hooks/useLiveTranscription";
 import { useMeetingSocket } from "@/hooks/useMeetingSocket";
+import { getWebSocketBaseUrl } from "@/lib/publicApi";
 import {
   actionItemsApi,
   ApiError,
@@ -49,6 +58,7 @@ export default function MeetingRoomPage() {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
+  const [liveSocket, setLiveSocket] = useState<WebSocket | null>(null);
   const [qaHistory, setQaHistory] = useState<
     Array<{
       id?: string;
@@ -94,6 +104,18 @@ export default function MeetingRoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, id]);
 
+  useEffect(() => {
+    if (!id || !token) return;
+    const socket = new WebSocket(
+      `${getWebSocketBaseUrl()}/ws/meetings/${id}?token=${encodeURIComponent(token)}`
+    );
+    setLiveSocket(socket);
+    return () => {
+      socket.close();
+      setLiveSocket(null);
+    };
+  }, [id, token]);
+
   const { connected: socketConnected } = useMeetingSocket(
     id,
     token ?? undefined,
@@ -126,6 +148,13 @@ export default function MeetingRoomPage() {
     }
     }
   );
+  const {
+    isRecording,
+    transcript: liveTranscript,
+    error: liveTranscriptError,
+    startRecording,
+    stopRecording,
+  } = useLiveTranscription(liveSocket);
 
   async function joinMeeting() {
     if (!token) return;
@@ -274,6 +303,15 @@ export default function MeetingRoomPage() {
     });
   }
 
+  function formatCompactDate(value: string) {
+    return new Date(value).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
   async function handleActionItemUpdate(
     itemId: string,
     updates: {
@@ -342,108 +380,124 @@ export default function MeetingRoomPage() {
   }
 
   return (
-    <Shell title="Meeting details">
-      <div className="space-y-8">
-        <Link href="/dashboard" className="text-sm text-brand-600 hover:underline">
-          ← Back to dashboard
-        </Link>
-
-        {error && (
-          <p className="rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
-            {error}
-          </p>
-        )}
-
-        {joinRequired ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h1 className="text-2xl font-semibold text-slate-900">Join this meeting</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              You have the meeting link but are not a participant yet.
-            </p>
-            <button
-              type="button"
-              onClick={() => void joinMeeting()}
-              disabled={joining}
-              className="mt-4 rounded-2xl bg-brand-600 px-4 py-3 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
-            >
-              {joining ? "Joining…" : "Join meeting"}
-            </button>
-          </section>
-        ) : null}
-
-        {detail && (
-          <>
-            <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-600">
-                  Meeting
+    <Shell title={detail?.title || "Meeting details"}>
+      <div className="page-enter space-y-6">
+        <div className="sticky top-0 z-20 -mx-4 border-b border-background-border bg-background-surface/80 px-4 py-3 backdrop-blur md:-mx-6 md:px-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <Link href="/dashboard" className="text-text-secondary transition-colors hover:text-text-primary">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M15 18 9 12l6-6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Link>
+              <div className="min-w-0">
+                <p className="truncate text-base font-semibold text-text-primary">
+                  {detail?.title || "Meeting details"}
                 </p>
-                <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-                  {detail.title}
-                </h1>
-                {detail.description ? (
-                  <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-                    {detail.description}
-                  </p>
+                {detail ? (
+                  <p className="text-xs text-text-secondary">{formatMeetingDate(detail.created_at)}</p>
                 ) : null}
-
-                <div className="mt-5 flex flex-wrap gap-2 text-sm text-slate-600">
-                  <span className="rounded-full bg-slate-100 px-3 py-1">
-                    {formatMeetingDate(detail.created_at)}
-                  </span>
-                  <span className="rounded-full bg-slate-100 px-3 py-1">
-                    Host: {detail.host.email}
-                  </span>
-                  <span className="rounded-full bg-slate-100 px-3 py-1">
-                    Participants: {detail.participants.length}
-                  </span>
-                  <span className="rounded-full bg-slate-100 px-3 py-1">
-                    Transcript versions: {detail.transcripts.length}
-                  </span>
-                  <span className="rounded-full bg-slate-100 px-3 py-1">
-                    Socket: {socketConnected ? "Live" : "Offline"}
-                  </span>
-                </div>
-                <div className="mt-5 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleShare()}
-                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    Copy share link
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleExport("markdown")}
-                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  >
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className={`h-2 w-2 rounded-full ${socketConnected ? "bg-semantic-success" : "bg-text-muted"}`} />
+              <details className="relative">
+                <summary className="list-none">
+                  <Button variant="ghost" size="sm">Export</Button>
+                </summary>
+                <div className="absolute right-0 mt-2 w-40 rounded-xl border border-background-border bg-background-elevated p-2 shadow-card">
+                  <button type="button" onClick={() => void handleExport("markdown")} className="flex w-full rounded-md px-3 py-2 text-left text-sm text-text-secondary transition hover:bg-background-surface hover:text-text-primary">
                     Export Markdown
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleExport("json")}
-                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  >
+                  <button type="button" onClick={() => void handleExport("json")} className="flex w-full rounded-md px-3 py-2 text-left text-sm text-text-secondary transition hover:bg-background-surface hover:text-text-primary">
                     Export JSON
                   </button>
+                  <button type="button" onClick={() => void handleShare()} className="flex w-full rounded-md px-3 py-2 text-left text-sm text-text-secondary transition hover:bg-background-surface hover:text-text-primary">
+                    Copy share link
+                  </button>
                 </div>
-              </div>
+              </details>
+              {detail ? (
+                <div className="hidden items-center -space-x-2 sm:flex">
+                  {detail.participants.slice(0, 3).map((participant) => (
+                    <span key={participant.user_id} className="rounded-full ring-2 ring-background-surface">
+                      <Avatar name={participant.user.full_name || participant.user.email} size="md" />
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Upload
-                </p>
-                <h2 className="mt-1 text-lg font-semibold text-slate-900">
-                  Add meeting audio
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-slate-500">
-                  Upload a recording to refresh the transcript and AI-generated meeting
-                  notes.
-                </p>
+        {error ? (
+          <p className="rounded-md border border-semantic-danger/20 bg-semantic-danger/10 px-4 py-3 text-sm text-semantic-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
 
-                <div className="mt-4 space-y-3">
-                  <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
-                    {audioFile ? audioFile.name : "Choose audio file"}
+        <LiveTranscriptBar
+          isRecording={isRecording}
+          transcript={liveTranscript}
+          onStart={() => {
+            void startRecording();
+          }}
+          onStop={stopRecording}
+          error={liveTranscriptError}
+        />
+
+        {joinRequired ? (
+          <Card className="space-y-3">
+            <p className="text-xl font-semibold text-text-primary">Join this meeting</p>
+            <p className="text-sm text-text-secondary">
+              You have the invite link but are not a participant yet.
+            </p>
+            <Button onClick={() => void joinMeeting()} loading={joining}>
+              {joining ? "Joining" : "Join meeting"}
+            </Button>
+          </Card>
+        ) : null}
+
+        {!detail && !error && !joinRequired ? (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="space-y-4">
+              <Skeleton className="h-48 w-full" />
+              <Skeleton className="h-80 w-full" />
+              <Skeleton className="h-72 w-full" />
+            </div>
+            <div className="space-y-4">
+              <Skeleton className="h-56 w-full" />
+              <Skeleton className="h-72 w-full" />
+              <Skeleton className="h-56 w-full" />
+            </div>
+          </div>
+        ) : null}
+
+        {detail ? (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="space-y-4">
+              <Card className="space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">Audio upload</p>
+                    <p className="mt-1 text-xs text-text-secondary">
+                      Upload recorded audio to refresh the transcript and summary.
+                    </p>
+                  </div>
+                  <Badge variant={latestJob?.status === "completed" ? "success" : "default"}>
+                    {latestJob?.status || "Idle"}
+                  </Badge>
+                </div>
+                <div className="space-y-3">
+                  <label className="flex h-24 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-background-border bg-background-elevated text-center transition hover:border-background-borderHover hover:bg-background-surface">
+                    <span className="text-sm font-medium text-text-primary">
+                      {audioFile ? audioFile.name : "Drop audio here or click to browse"}
+                    </span>
+                    <span className="mt-1 text-xs text-text-secondary">
+                      {audioFile
+                        ? `${(audioFile.size / 1024 / 1024).toFixed(2)} MB selected`
+                        : "MP3, WAV, M4A, WEBM, OGG, or FLAC"}
+                    </span>
                     <input
                       type="file"
                       accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac"
@@ -456,11 +510,22 @@ export default function MeetingRoomPage() {
                       }}
                     />
                   </label>
-
-                  <button
-                    type="button"
+                  {audioFile ? (
+                    <div className="flex items-center justify-between rounded-md border border-background-border bg-background-elevated px-3 py-2 text-sm text-text-secondary">
+                      <span className="truncate">{audioFile.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setAudioFile(null)}
+                        className="text-text-muted transition hover:text-text-primary"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
+                  <Button
+                    className="w-full"
+                    loading={uploading}
                     disabled={!audioFile || uploading}
-                    className="w-full rounded-2xl bg-brand-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={async () => {
                       if (!audioFile || !token) return;
                       setUploading(true);
@@ -473,130 +538,136 @@ export default function MeetingRoomPage() {
                         setUploadMessage("Audio queued. Live updates will appear here.");
                         setAudioFile(null);
                       } catch (err) {
-                        setUploadError(
-                          err instanceof Error ? err.message : "Upload failed"
-                        );
+                        setUploadError(err instanceof Error ? err.message : "Upload failed");
                       } finally {
                         setUploading(false);
                       }
                     }}
                   >
-                    {uploading ? "Processing..." : "Upload & process"}
-                  </button>
+                    {uploading ? "Processing Audio" : "Process Audio"}
+                  </Button>
+                  <div className="h-1 overflow-hidden rounded-full bg-brand-primaryDim">
+                    <div
+                      className="h-full rounded-full bg-brand-primary transition-all duration-250"
+                      style={{
+                        width: `${Math.max(uploading || latestJob ? 8 : 0, (latestJob?.progress ?? 0) * 100)}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-
-                {uploadError ? (
-                  <p className="mt-3 text-sm text-red-600" role="alert">
-                    {uploadError}
-                  </p>
-                ) : null}
-                {uploadMessage ? (
-                  <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                    {uploadMessage}
-                  </p>
-                ) : null}
                 {latestJob ? (
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <p className="text-sm font-medium text-slate-800">
-                      Latest job: {latestJob.stage.replaceAll("_", " ")}
-                    </p>
-                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                      <div
-                        className="h-full bg-brand-600 transition-all"
-                        style={{ width: `${Math.max(5, latestJob.progress * 100)}%` }}
-                      />
-                    </div>
-                    <p className="mt-2 text-xs text-slate-500">
-                      {latestJob.status} {activeJobId === latestJob.id ? "· tracking live" : ""}
-                    </p>
+                  <div className="flex items-center gap-3 text-sm text-text-secondary">
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 animate-[spin_600ms_linear_infinite]" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
+                    </svg>
+                    <span className="transition-opacity duration-250">
+                      {latestJob.stage.replaceAll("_", " ")} · {Math.round(latestJob.progress * 100)}%
+                    </span>
                   </div>
                 ) : null}
-              </div>
-            </section>
+                {uploadError ? <p className="text-sm text-semantic-danger">{uploadError}</p> : null}
+                {uploadMessage ? <p className="text-sm text-semantic-success">{uploadMessage}</p> : null}
+              </Card>
 
-            <SummaryCard summary={latestTranscript?.summary} />
+              <TranscriptSection
+                transcript={visibleTranscript}
+                isEditing={editingTranscriptId === latestTranscript?.id}
+                editedText={editedTranscriptText}
+                onStartEdit={() => {
+                  if (!latestTranscript) return;
+                  handleStartEdit(latestTranscript.id, visibleTranscript);
+                }}
+                onCancelEdit={handleCancelEdit}
+                onChange={setEditedTranscriptText}
+                onSave={() => {
+                  if (!latestTranscript) return;
+                  void handleSaveTranscript(latestTranscript.id);
+                }}
+                onRegenerate={() => {
+                  if (!latestTranscript) return;
+                  void handleRegenerateTranscript(latestTranscript.id);
+                }}
+                saving={savingTranscriptId === latestTranscript?.id}
+                regenerating={regeneratingTranscriptId === latestTranscript?.id}
+                message={transcriptActionMessage}
+                error={transcriptActionError}
+              />
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="mb-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Key Points
-                </p>
-                <h2 className="mt-1 text-lg font-semibold text-slate-900">
-                  Important discussion highlights
-                </h2>
-              </div>
+              <QASection
+                question={question}
+                asking={asking}
+                error={askError}
+                history={qaHistory}
+                disabled={!latestTranscript}
+                onQuestionChange={(value) => {
+                  setQuestion(value);
+                  if (askError) setAskError(null);
+                }}
+                onSubmit={handleAskSubmit}
+              />
+            </div>
 
-              {latestTranscript?.key_points.length ? (
-                <ul className="space-y-3">
-                  {latestTranscript.key_points.map((point, index) => (
-                    <li
-                      key={`${latestTranscript.id}-key-point-${index}`}
-                      className="flex gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700"
-                    >
-                      <span className="mt-1 h-2 w-2 rounded-full bg-brand-500" />
-                      <span className="leading-6">{point}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5">
-                  <p className="text-sm text-slate-500">
-                    No key points available yet.
-                  </p>
+            <div className="space-y-4">
+              <SummaryCard
+                summary={latestTranscript?.summary}
+                keyPoints={latestTranscript?.key_points ?? []}
+              />
+
+              <ActionItemsList
+                action_items={detail.action_items}
+                participants={detail.participants.map((participant) => participant.user)}
+                savingId={savingActionItemId}
+                error={actionItemError}
+                onUpdate={handleActionItemUpdate}
+              />
+
+              <Card className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-text-primary">Participants</p>
+                  <Badge variant="default">{detail.participants.length}</Badge>
                 </div>
-              )}
-            </section>
-
-            <ActionItemsList
-              action_items={detail.action_items}
-              participants={detail.participants.map((participant) => participant.user)}
-              savingId={savingActionItemId}
-              error={actionItemError}
-              onUpdate={handleActionItemUpdate}
-            />
-
-            <TranscriptSection
-              transcript={visibleTranscript}
-              isEditing={editingTranscriptId === latestTranscript?.id}
-              editedText={editedTranscriptText}
-              onStartEdit={() => {
-                if (!latestTranscript) return;
-                handleStartEdit(latestTranscript.id, visibleTranscript);
-              }}
-              onCancelEdit={handleCancelEdit}
-              onChange={setEditedTranscriptText}
-              onSave={() => {
-                if (!latestTranscript) return;
-                void handleSaveTranscript(latestTranscript.id);
-              }}
-              onRegenerate={() => {
-                if (!latestTranscript) return;
-                void handleRegenerateTranscript(latestTranscript.id);
-              }}
-              saving={savingTranscriptId === latestTranscript?.id}
-              regenerating={regeneratingTranscriptId === latestTranscript?.id}
-              message={transcriptActionMessage}
-              error={transcriptActionError}
-            />
-
-            <QASection
-              question={question}
-              asking={asking}
-              error={askError}
-              history={qaHistory}
-              disabled={!latestTranscript}
-              onQuestionChange={(value) => {
-                setQuestion(value);
-                if (askError) setAskError(null);
-              }}
-              onSubmit={handleAskSubmit}
-            />
-          </>
-        )}
-
-        {!detail && !error && !joinRequired && (
-          <p className="text-slate-500">Loading meeting…</p>
-        )}
+                {detail.participants.length ? (
+                  <div className="space-y-3">
+                    {detail.participants.map((participant) => (
+                      <div key={participant.user_id} className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar name={participant.user.full_name || participant.user.email} size="sm" />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-text-primary">
+                              {participant.user.full_name || participant.user.email}
+                            </p>
+                            <p className="truncate text-xs text-text-secondary">
+                              {participant.user.email}
+                            </p>
+                          </div>
+                        </div>
+                        <Badge variant={participant.role === "host" ? "info" : "default"}>
+                          {participant.role}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 7a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7m10 14v-2a4 4 0 0 0-3-3.87M14 4.1a4 4 0 0 1 0 7.8"
+                    title="No participants"
+                    description="People invited to this meeting will appear here."
+                  />
+                )}
+                {joinRequired ? (
+                  <Button className="w-full" onClick={() => void joinMeeting()} loading={joining}>
+                    {joining ? "Joining" : "Join meeting"}
+                  </Button>
+                ) : null}
+                <div className="rounded-md border border-background-border bg-background-elevated px-3 py-3 text-xs text-text-secondary">
+                  Host: {detail.host.email}
+                  <br />
+                  Created: {formatCompactDate(detail.created_at)}
+                </div>
+              </Card>
+            </div>
+          </div>
+        ) : null}
       </div>
     </Shell>
   );

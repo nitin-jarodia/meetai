@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,31 @@ def transcribe_audio(file_path: str | Path) -> str:
         raise
     except Exception as e:
         raise TranscriptionError(f"Transcription failed: {e}") from e
+
+
+def transcribe_chunk(audio_bytes: bytes, model_name: str | None = None) -> str:
+    if not audio_bytes:
+        return ""
+
+    _ensure_ffmpeg_on_path()
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            temp_file.write(audio_bytes)
+            temp_path = Path(temp_file.name)
+
+        model = _load_whisper_model(model_name or settings.whisper_model)
+        result = model.transcribe(str(temp_path))
+        return str((result.get("text") or "")).strip()
+    except Exception:
+        return ""
+    finally:
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 class TranscriptionService:

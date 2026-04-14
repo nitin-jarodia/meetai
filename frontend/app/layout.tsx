@@ -1,5 +1,12 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import { ToastProvider } from "@/components/ui/Toast";
 import "./globals.css";
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+});
 
 export const metadata: Metadata = {
   title: "MeetAI",
@@ -13,8 +20,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen antialiased" suppressHydrationWarning>
-        {children}
+      <body
+        className={`${inter.className} min-h-screen bg-background-base antialiased`}
+        suppressHydrationWarning
+      >
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );

@@ -3,11 +3,80 @@
 @tailwind utilities;
 
 :root {
-  --foreground: #0f172a;
-  --background: #f8fafc;
+  --color-bg-base: #0A0A0F;
+  --color-bg-surface: #111118;
+  --color-bg-elevated: #1A1A24;
+  --color-bg-border: #ffffff14;
+  --color-bg-border-hover: #ffffff22;
+  --color-brand-primary: #6366F1;
+  --color-brand-primary-hover: #818CF8;
+  --color-brand-primary-dim: #6366F120;
+  --color-semantic-success: #10B981;
+  --color-semantic-warning: #F59E0B;
+  --color-semantic-danger: #EF4444;
+  --color-semantic-info: #3B82F6;
+  --color-text-primary: #F1F5F9;
+  --color-text-secondary: #94A3B8;
+  --color-text-muted: #475569;
+  --color-text-inverse: #0A0A0F;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer base {
+  * {
+    outline: none;
+  }
+
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgb(99 102 241 / 0.5);
+  }
+
+  html {
+    background: var(--color-bg-base);
+  }
+
+  body {
+    @apply bg-background-base text-text-primary;
+    min-height: 100vh;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-brand-primary) 30%, transparent);
+    color: var(--color-text-primary);
+  }
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  color: var(--color-text-primary);
+  background: var(--color-bg-base);
+}
+
+.page-enter {
+  animation: fadeIn 200ms ease forwards;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ffffff18;
+  border-radius: 2px;
 }

@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
 
-type TranscriptSectionProps = {
+interface TranscriptSectionProps {
   transcript?: string | null;
   isEditing: boolean;
   editedText: string;
@@ -15,7 +18,7 @@ type TranscriptSectionProps = {
   regenerating: boolean;
   message?: string | null;
   error?: string | null;
-};
+}
 
 export function TranscriptSection({
   transcript,
@@ -31,104 +34,76 @@ export function TranscriptSection({
   message,
   error,
 }: TranscriptSectionProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <Card className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Transcript
-          </p>
-          <h2 className="mt-1 text-lg font-semibold text-slate-900">Cleaned transcript</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Review, edit, and regenerate the summary from the latest cleaned transcript.
-          </p>
+          <p className="text-sm font-semibold text-text-primary">Transcript</p>
+          <p className="mt-1 text-xs text-text-secondary">Review, edit, and refine the latest cleaned transcript.</p>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setIsOpen((prev) => !prev)}
-          className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-        >
+        <Button type="button" variant="ghost" size="sm" onClick={() => setIsOpen((prev) => !prev)}>
           {isOpen ? "Hide Transcript" : "Show Transcript"}
-        </button>
+        </Button>
       </div>
 
       {message ? (
-        <p className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-          {message}
-        </p>
+        <p className="rounded-md border border-semantic-success/20 bg-semantic-success/10 px-3 py-2 text-sm text-semantic-success">{message}</p>
       ) : null}
       {error ? (
-        <p className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+        <p className="rounded-md border border-semantic-danger/20 bg-semantic-danger/10 px-3 py-2 text-sm text-semantic-danger">{error}</p>
       ) : null}
 
       <div
-        className={`grid transition-all duration-300 ease-out ${
+        className={`grid transition-all duration-250 ease-out ${
           isOpen ? "mt-4 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
         }`}
       >
         <div className="overflow-hidden">
           {transcript ? (
-            <div className="space-y-4 border-t border-slate-100 pt-4">
-              <div className="flex flex-wrap gap-2">
+            <div className="space-y-4 border-t border-background-border pt-4">
+              <div className="flex flex-wrap items-center gap-2">
                 {isEditing ? (
                   <>
-                    <button
-                      type="button"
-                      onClick={onCancelEdit}
-                      disabled={saving}
-                      className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
+                    <Button type="button" variant="ghost" size="sm" onClick={onCancelEdit} disabled={saving}>
                       Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onSave}
-                      disabled={saving}
-                      className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {saving ? "Saving..." : "Save"}
-                    </button>
+                    </Button>
+                    <Button type="button" size="sm" onClick={onSave} loading={saving}>
+                      {saving ? "Saving" : "Save"}
+                    </Button>
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={onStartEdit}
-                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                  >
+                  <Button type="button" variant="ghost" size="sm" onClick={onStartEdit}>
                     Edit Transcript
-                  </button>
+                  </Button>
                 )}
-
-                <button
-                  type="button"
-                  onClick={onRegenerate}
-                  disabled={regenerating}
-                  className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {regenerating ? "Regenerating..." : "Regenerate Summary"}
-                </button>
+                <Button type="button" variant="ghost" size="sm" onClick={onRegenerate} loading={regenerating}>
+                  {regenerating ? "Regenerating" : "Clean & Regenerate"}
+                </Button>
               </div>
-
-              <textarea
-                rows={10}
-                value={isEditing ? editedText : transcript}
-                onChange={(e) => onChange(e.target.value)}
-                disabled={!isEditing}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700 outline-none transition focus:border-brand-500 disabled:cursor-text disabled:opacity-100"
-              />
+              {isEditing ? (
+                <textarea
+                  rows={12}
+                  value={editedText}
+                  onChange={(e) => onChange(e.target.value)}
+                  className="min-h-[200px] w-full rounded-md border border-background-border bg-background-elevated px-4 py-3 text-sm leading-7 text-text-primary"
+                />
+              ) : (
+                <div className="rounded-md border border-background-border bg-background-elevated px-4 py-4">
+                  <p className="whitespace-pre-wrap text-sm leading-7 text-text-secondary">{transcript}</p>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5">
-              <p className="text-sm text-slate-500">
-                No cleaned transcript is available yet. Upload meeting audio to generate one.
-              </p>
-            </div>
+            <EmptyState
+              icon="M7 4h7l5 5v11a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"
+              title="No transcript yet"
+              description="Upload meeting audio to generate a cleaned transcript."
+            />
           )}
         </div>
       </div>
-    </section>
+    </Card>
   );
 }

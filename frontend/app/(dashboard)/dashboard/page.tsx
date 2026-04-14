@@ -4,6 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { Avatar } from "@/components/ui/Avatar";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Input";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import {
   meetingsApi,
@@ -17,12 +24,14 @@ export default function DashboardPage() {
   const clear = useAuthStore((s) => s.clear);
   const router = useRouter();
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [query, setQuery] = useState("");
   const [meetings, setMeetings] = useState<MeetingDetail[]>([]);
   const [results, setResults] = useState<MeetingSearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -71,7 +80,7 @@ export default function DashboardPage() {
             setResults([]);
           }
         });
-    }, 250);
+    }, 300);
     return () => {
       cancelled = true;
       window.clearTimeout(handle);
@@ -84,10 +93,15 @@ export default function DashboardPage() {
     setError(null);
     setCreating(true);
     try {
-      const meeting = await meetingsApi.create(token, { title });
+      const meeting = await meetingsApi.create(token, {
+        title,
+        description: description.trim() || null,
+      });
       const detail = await meetingsApi.get(token, meeting.id);
       setMeetings((prev) => [detail, ...prev.filter((item) => item.id !== meeting.id)]);
       setTitle("");
+      setDescription("");
+      setShowModal(false);
       router.push(`/meeting/${meeting.id}`);
     } catch (err) {
       setError(
@@ -111,128 +125,235 @@ export default function DashboardPage() {
     );
   }
 
+  const currentHour = new Date().getHours();
+  const greeting =
+    currentHour < 12 ? "Good morning" : currentHour < 18 ? "Good afternoon" : "Good evening";
+  const currentUserId = (() => {
+    try {
+      const payload = token.split(".")[1];
+      const decoded = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as {
+        sub?: string;
+      };
+      return decoded.sub ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const currentUser =
+    meetings
+      .flatMap((meeting) => meeting.participants.map((participant) => participant.user))
+      .find((user) => user.id === currentUserId) ??
+    meetings.find((meeting) => meeting.host.id === currentUserId)?.host ??
+    null;
+  const displayName =
+    currentUser?.full_name || currentUser?.email?.split("@")[0] || "there";
+  const sidebarUser = currentUser?.email || "Your workspace";
+  const visibleMeetings = query.trim() ? [] : meetings;
+  const searchResults = query.trim() ? results : [];
+
   return (
-    <Shell title="Dashboard">
-      <div className="flex flex-col gap-8">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-slate-900">Your meetings</h1>
-          <button
-            type="button"
-            onClick={logout}
-            className="text-sm text-slate-600 underline hover:text-slate-900"
-          >
-            Log out
-          </button>
+    <Shell
+      title="Dashboard"
+      sidebarUser={sidebarUser}
+      sidebarFooter={
+        <Button variant="ghost" size="sm" onClick={logout} className="w-full justify-start">
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <path d="M15 17l5-5-5-5M20 12H9M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Sign out
+        </Button>
+      }
+    >
+      <div className="page-enter flex flex-col gap-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xl font-semibold text-text-primary">
+              {greeting}, {displayName}
+            </p>
+            <p className="mt-1 text-sm text-text-secondary">
+              Keep your meetings, notes, and next steps in one place.
+            </p>
+          </div>
+          <Button onClick={() => setShowModal(true)}>
+            <span className="text-lg leading-none">+</span>
+            New Meeting
+          </Button>
         </div>
 
-        <form
-          onSubmit={createMeeting}
-          className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-        >
-          <h2 className="text-sm font-medium text-slate-700">New meeting</h2>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <input
-              type="text"
-              required
-              placeholder="Meeting title"
-              className="min-w-[200px] flex-1 rounded-md border border-slate-300 px-3 py-2"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-            <button
-              type="submit"
-              disabled={creating}
-              className="rounded-lg bg-brand-600 px-4 py-2 text-white hover:bg-brand-700 disabled:opacity-60"
-            >
-              {creating ? "Creating…" : "Create"}
-            </button>
-          </div>
-          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-        </form>
+        <div className="relative">
+          <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search meetings, transcripts..."
+            className="h-10 w-full rounded-md border border-background-border bg-background-elevated pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted"
+          />
+        </div>
 
-        <section>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-sm font-medium text-slate-700">Meeting history</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Search titles and transcript content across your meetings.
-              </p>
-            </div>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search meetings..."
-              className="w-full rounded-md border border-slate-300 px-3 py-2 sm:max-w-sm"
-            />
-          </div>
+        {error ? <p className="text-sm text-semantic-danger">{error}</p> : null}
 
-          {query.trim() ? (
-            <ul className="mt-4 space-y-3">
-              {results.length === 0 ? (
-                <li className="rounded-lg border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
-                  No matching meetings found.
-                </li>
-              ) : (
-                results.map((result) => (
-                  <li
-                    key={result.meeting.id}
-                    className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-                  >
-                    <Link
-                      href={`/meeting/${result.meeting.id}`}
-                      className="text-base font-medium text-brand-600 hover:underline"
-                    >
-                      {result.meeting.title}
-                    </Link>
-                    <p className="mt-2 text-sm text-slate-600">{result.snippet}</p>
-                  </li>
-                ))
-              )}
-            </ul>
+        {loading && !query.trim() ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <Card key={index} className="space-y-4">
+                <Skeleton className="h-5 w-2/3" />
+                <Skeleton className="h-4 w-24" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-7 w-7 rounded-full" />
+                  <Skeleton className="h-7 w-7 rounded-full" />
+                  <Skeleton className="h-7 w-7 rounded-full" />
+                </div>
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-1/2" />
+              </Card>
+            ))}
+          </div>
+        ) : query.trim() ? (
+          searchResults.length === 0 ? (
+            <EmptyState
+              icon="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z"
+              title="No results found"
+              description="Try another meeting title, note, or transcript phrase."
+            />
           ) : (
-            <ul className="mt-4 space-y-3">
-              {loading ? (
-                <li className="text-sm text-slate-500">Loading meetings…</li>
-              ) : meetings.length === 0 ? (
-                <li className="rounded-lg border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
-                  No meetings yet. Create one above to get started.
-                </li>
-              ) : (
-                meetings.map((meeting) => {
-                  const latestTranscript = meeting.transcripts[0];
-                  return (
-                    <li
-                      key={meeting.id}
-                      className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-                    >
-                      <Link
-                        href={`/meeting/${meeting.id}`}
-                        className="text-base font-medium text-brand-600 hover:underline"
-                      >
-                        {meeting.title}
-                      </Link>
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                        <span className="rounded-full bg-slate-100 px-3 py-1">
-                          {meeting.participants.length} participants
-                        </span>
-                        <span className="rounded-full bg-slate-100 px-3 py-1">
-                          {meeting.action_items.length} action items
-                        </span>
-                        <span className="rounded-full bg-slate-100 px-3 py-1">
-                          {meeting.qa_history.length} Q&A entries
-                        </span>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {searchResults.map((result) => (
+                <Link key={result.meeting.id} href={`/meeting/${result.meeting.id}`}>
+                  <Card hover className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-base font-semibold text-text-primary">
+                          {result.meeting.title}
+                        </p>
+                        <p className="mt-1 text-xs text-text-secondary">
+                          Search relevance {Math.round(result.score * 100)}%
+                        </p>
                       </div>
-                      <p className="mt-3 text-sm text-slate-600">
-                        {latestTranscript?.summary || meeting.description || "No summary yet."}
-                      </p>
-                    </li>
-                  );
-                })
-              )}
-            </ul>
-          )}
-        </section>
+                      <Badge variant="info">Match</Badge>
+                    </div>
+                    <p className="text-sm leading-6 text-text-secondary">{result.snippet}</p>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          )
+        ) : visibleMeetings.length === 0 ? (
+          <EmptyState
+            icon="M7 3v3M17 3v3M4 8h16M5 6h14a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a1 1 0 0 1 1-1Z"
+            title="No meetings yet"
+            description="Create your first meeting to start capturing notes and actions."
+            action={{ label: "Create meeting", onClick: () => setShowModal(true) }}
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {visibleMeetings.map((meeting) => {
+              const latestTranscript = meeting.transcripts[0];
+              const avatars = meeting.participants.slice(0, 3).map((participant) => participant.user);
+              const overflow = Math.max(0, meeting.participants.length - avatars.length);
+              const createdAt = new Date(meeting.created_at);
+              return (
+                <Link key={meeting.id} href={`/meeting/${meeting.id}`}>
+                  <Card hover className="flex h-full flex-col gap-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-base font-semibold text-text-primary">
+                          {meeting.title}
+                        </p>
+                        <p className="mt-1 text-xs text-text-secondary">
+                          {createdAt.toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                          })}{" "}
+                          ·{" "}
+                          {createdAt.toLocaleTimeString(undefined, {
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                      <Badge variant={latestTranscript ? "success" : "default"}>
+                        {latestTranscript ? "Transcribed" : "No transcript"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex -space-x-2">
+                        {avatars.map((user) => (
+                          <span key={user.id} className="rounded-full ring-2 ring-background-surface">
+                            <Avatar name={user.full_name || user.email} size="sm" />
+                          </span>
+                        ))}
+                        {overflow > 0 ? (
+                          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-background-border bg-background-elevated text-xs text-text-secondary ring-2 ring-background-surface">
+                            +{overflow}
+                          </span>
+                        ) : null}
+                      </div>
+                      <span className="text-xs text-text-muted">
+                        {meeting.action_items.length} action items
+                      </span>
+                    </div>
+                    <p className="line-clamp-3 text-sm leading-6 text-text-secondary">
+                      {latestTranscript?.summary || meeting.description || "No summary yet."}
+                    </p>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+
+        {showModal ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <Card className="w-full max-w-[440px] rounded-xl bg-background-elevated p-6">
+              <form onSubmit={createMeeting} className="space-y-4">
+                <div>
+                  <p className="text-xl font-semibold text-text-primary">Create a meeting</p>
+                  <p className="mt-1 text-sm text-text-secondary">
+                    Start a workspace for notes, transcripts, and follow-up.
+                  </p>
+                </div>
+                <Input
+                  label="Title"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Quarterly planning"
+                />
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+                    Description
+                  </span>
+                  <textarea
+                    rows={4}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Optional context for the meeting..."
+                    className="rounded-md border border-background-border bg-background-surface px-3 py-3 text-sm text-text-primary placeholder:text-text-muted"
+                  />
+                </label>
+                <div className="flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setShowModal(false);
+                      setTitle("");
+                      setDescription("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" loading={creating}>
+                    {creating ? "Creating" : "Create"}
+                  </Button>
+                </div>
+              </form>
+            </Card>
+          </div>
+        ) : null}
       </div>
     </Shell>
   );

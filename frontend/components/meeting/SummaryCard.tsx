@@ -1,31 +1,43 @@
-type SummaryCardProps = {
+import { Badge } from "@/components/ui/Badge";
+import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+
+interface SummaryCardProps {
   summary?: string | null;
-};
+  keyPoints?: string[];
+}
 
-export function SummaryCard({ summary }: SummaryCardProps) {
+export function SummaryCard({ summary, keyPoints = [] }: SummaryCardProps) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <Card className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-600">
-            Summary
-          </p>
-          <h2 className="mt-1 text-xl font-semibold text-slate-900">Meeting overview</h2>
+          <p className="text-sm font-semibold text-text-primary">AI Summary</p>
+          <p className="mt-1 text-xs text-text-secondary">Overview generated from the latest transcript</p>
         </div>
+        <Badge variant={summary ? "success" : "default"}>{summary ? "Ready" : "Pending"}</Badge>
       </div>
-
       {summary ? (
-        <div className="rounded-2xl bg-gradient-to-br from-brand-50 to-emerald-50 p-5">
-          <p className="whitespace-pre-wrap text-base leading-7 text-slate-800">{summary}</p>
+        <div className="space-y-4">
+          <p className="whitespace-pre-wrap text-sm leading-7 text-text-secondary">{summary}</p>
+          {keyPoints.length ? (
+            <ul className="space-y-2">
+              {keyPoints.map((point, index) => (
+                <li key={`${point}-${index}`} className="flex gap-2 text-xs text-text-secondary">
+                  <span className="pt-1 text-brand-primary">●</span>
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5">
-          <p className="text-sm text-slate-500">
-            No summary yet. Upload audio or regenerate the transcript summary to see a
-            concise overview here.
-          </p>
-        </div>
+        <EmptyState
+          icon="M4 6.5A2.5 2.5 0 0 1 6.5 4H15l5 5v8.5A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5Z"
+          title="Summary pending"
+          description="Upload audio or regenerate the transcript to generate an overview."
+        />
       )}
-    </section>
+    </Card>
   );
 }
