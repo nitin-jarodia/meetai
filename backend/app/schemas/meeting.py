@@ -31,9 +31,37 @@ class ParticipantBrief(BaseModel):
 
 
 class ActionItemOut(BaseModel):
+    id: uuid.UUID | None = None
     task: str
     assigned_to: str | None = None
     deadline: str | None = None
+    status: str | None = None
+    assigned_user_id: uuid.UUID | None = None
+    source: str | None = None
+    updated_at: datetime | None = None
+
+
+class MeetingQAEntryOut(BaseModel):
+    id: uuid.UUID
+    transcript_id: uuid.UUID | None = None
+    question: str
+    answer: str
+    created_at: datetime
+    asked_by: UserOut
+
+
+class MeetingProcessingJobOut(BaseModel):
+    id: uuid.UUID
+    meeting_id: uuid.UUID
+    filename: str | None = None
+    status: str
+    stage: str
+    progress: float
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    created_by: UserOut
 
 
 class TranscriptBrief(BaseModel):
@@ -58,14 +86,27 @@ class MeetingDetail(BaseModel):
     host: UserOut
     participants: list[ParticipantBrief]
     transcripts: list[TranscriptBrief]
+    qa_history: list[MeetingQAEntryOut] = Field(default_factory=list)
+    action_items: list[ActionItemOut] = Field(default_factory=list)
+    processing_jobs: list[MeetingProcessingJobOut] = Field(default_factory=list)
+
+
+class MeetingListResponse(BaseModel):
+    items: list[MeetingDetail] = Field(default_factory=list)
+
+
+class MeetingSearchResultOut(BaseModel):
+    meeting: MeetingOut
+    score: float
+    snippet: str
+
+
+class MeetingSearchResponse(BaseModel):
+    items: list[MeetingSearchResultOut] = Field(default_factory=list)
 
 
 class AudioUploadResponse(BaseModel):
-    transcript: str
-    cleaned_transcript: str
-    summary: str
-    key_points: list[str] = Field(default_factory=list)
-    action_items: list[ActionItemOut] = Field(default_factory=list)
+    job: MeetingProcessingJobOut
 
 
 class TranscriptUpdateRequest(BaseModel):
@@ -100,3 +141,26 @@ class MeetingQuestionRequest(BaseModel):
 
 class MeetingQuestionResponse(BaseModel):
     answer: str
+    entry: MeetingQAEntryOut
+
+
+class ActionItemUpdateRequest(BaseModel):
+    task: str | None = Field(default=None, min_length=1, max_length=5000)
+    assigned_to_name: str | None = Field(default=None, max_length=255)
+    assigned_user_id: uuid.UUID | None = None
+    deadline: str | None = Field(default=None, max_length=255)
+    status: str | None = Field(default=None, max_length=50)
+
+    @field_validator("task", "assigned_to_name", "deadline", mode="before")
+    @classmethod
+    def _strip_optional_values(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class MeetingExportResponse(BaseModel):
+    format: str
+    filename: str
+    content: str

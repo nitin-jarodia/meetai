@@ -3,7 +3,7 @@
 import uuid
 from typing import Dict, Set
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
 
 class ConnectionManager:
@@ -28,6 +28,17 @@ class ConnectionManager:
     @property
     def room_count(self) -> int:
         return len(self._rooms)
+
+    async def broadcast_json(self, meeting_id: uuid.UUID, payload: dict) -> None:
+        key = str(meeting_id)
+        sockets = list(self._rooms.get(key, set()))
+        for websocket in sockets:
+            try:
+                await websocket.send_json(payload)
+            except WebSocketDisconnect:
+                self.disconnect(meeting_id, websocket)
+            except RuntimeError:
+                self.disconnect(meeting_id, websocket)
 
 
 manager = ConnectionManager()

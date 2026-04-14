@@ -54,6 +54,7 @@ def apply_transcript_storage_columns(connection: Connection) -> None:
                 )
             )
     elif dialect in ("postgresql", "postgres"):
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         connection.execute(
             text("ALTER TABLE transcripts ADD COLUMN IF NOT EXISTS summary TEXT")
         )

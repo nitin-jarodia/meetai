@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.models  # noqa: F401 — register SQLAlchemy metadata
-from app.api.v1 import ai, auth, meetings, transcripts, websocket as ws_routes
+from app.api.v1 import action_items, ai, auth, meetings, transcripts, websocket as ws_routes
 from app.core.config import settings
 from app.core.database import Base, engine
 from app.core.schema_patches import apply_transcript_storage_columns
@@ -39,6 +39,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(meetings.router, prefix="/api/v1")
 app.include_router(transcripts.router, prefix="/api/v1")
+app.include_router(action_items.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
 app.include_router(ws_routes.router)
 

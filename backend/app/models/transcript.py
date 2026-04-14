@@ -30,3 +30,15 @@ class Transcript(Base):
     )
 
     meeting: Mapped["Meeting"] = relationship("Meeting", back_populates="transcripts")
+    qa_entries: Mapped[list["MeetingQAEntry"]] = relationship(
+        "MeetingQAEntry", back_populates="transcript"
+    )
+    action_items_records: Mapped[list["MeetingActionItem"]] = relationship(
+        "MeetingActionItem", back_populates="transcript"
+    )
+    search_chunks: Mapped[list["MeetingSearchChunk"]] = relationship(
+        "MeetingSearchChunk",
+        back_populates="transcript",
+        cascade="all, delete-orphan",
+        order_by="MeetingSearchChunk.chunk_index.asc()",
+    )

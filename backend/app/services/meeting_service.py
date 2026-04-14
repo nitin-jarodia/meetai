@@ -4,25 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.meeting_action_item import MeetingActionItem
+from app.models.meeting_qa import MeetingQAEntry
 from app.models.meeting import Meeting
 from app.models.participant import Participant
+from app.models.processing_job import MeetingProcessingJob
 from app.models.transcript import Transcript
 from app.models.user import User
 from app.repositories.meeting_repository import MeetingRepository
+from app.repositories.qa_repository import QARepository
 from app.schemas.meeting import (
+    ActionItemOut,
     MeetingCreate,
     MeetingDetail,
+    MeetingExportResponse,
+    MeetingListResponse,
+    MeetingProcessingJobOut,
+    MeetingQAEntryOut,
     MeetingOut,
     ParticipantBrief,
     TranscriptBrief,
 )
 from app.schemas.user import UserOut
+from app.services.action_item_service import sync_ai_action_items
 from app.services.ai_service import (
     AIService,
     MeetingAnalysis,
@@ -30,6 +41,7 @@ from app.services.ai_service import (
     SummaryGenerationError,
     TranscriptCleanupError,
 )
+from app.services.search_service import SearchService
 from app.services.transcription_service import transcribe_audio, TranscriptionError
 
 
@@ -47,6 +59,7 @@ class TranscriptNotFoundError(Exception):
 
 @dataclass(slots=True)
 class ProcessedAudioUpload:
+    transcript_id: uuid.UUID
     transcript: str
     cleaned_transcript: str
     summary: str
@@ -57,12 +70,82 @@ class ProcessedAudioUpload:
 @dataclass(slots=True)
 class MeetingAnswer:
     answer: str
+    entry: MeetingQAEntryOut
+
+
+def serialize_action_item(item: MeetingActionItem) -> ActionItemOut:
+    return ActionItemOut(
+        id=item.id,
+        task=item.task,
+        assigned_to=item.assigned_to_name,
+        deadline=item.deadline,
+        status=item.status,
+        assigned_user_id=item.assigned_user_id,
+        source=item.source,
+        updated_at=item.updated_at,
+    )
+
+
+def serialize_job(job: MeetingProcessingJob) -> MeetingProcessingJobOut:
+    return MeetingProcessingJobOut(
+        id=job.id,
+        meeting_id=job.meeting_id,
+        filename=job.filename,
+        status=job.status,
+        stage=job.stage,
+        progress=job.progress,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        completed_at=job.completed_at,
+        created_by=UserOut.model_validate(job.created_by),
+    )
+
+
+def serialize_qa_entry(entry: MeetingQAEntry) -> MeetingQAEntryOut:
+    return MeetingQAEntryOut(
+        id=entry.id,
+        transcript_id=entry.transcript_id,
+        question=entry.question,
+        answer=entry.answer,
+        created_at=entry.created_at,
+        asked_by=UserOut.model_validate(entry.user),
+    )
 
 
 class MeetingService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.meetings = MeetingRepository(session)
+        self.qa_entries = QARepository(session)
+
+    def _serialize_meeting_detail(self, meeting: Meeting) -> MeetingDetail:
+        host_out = UserOut.model_validate(meeting.host)
+        participants = [
+            ParticipantBrief(
+                user_id=participant.user_id,
+                role=participant.role,
+                joined_at=participant.joined_at,
+                user=UserOut.model_validate(participant.user),
+            )
+            for participant in meeting.participants
+        ]
+        transcripts = [
+            TranscriptBrief.model_validate(transcript) for transcript in meeting.transcripts
+        ]
+        return MeetingDetail(
+            id=meeting.id,
+            title=meeting.title,
+            description=meeting.description,
+            host_id=meeting.host_id,
+            created_at=meeting.created_at,
+            host=host_out,
+            participants=participants,
+            transcripts=transcripts,
+            qa_history=[serialize_qa_entry(entry) for entry in meeting.qa_entries],
+            action_items=[serialize_action_item(item) for item in meeting.action_items],
+            processing_jobs=[serialize_job(job) for job in meeting.processing_jobs],
+        )
 
     async def create_meeting(self, host: User, data: MeetingCreate) -> MeetingOut:
         now = datetime.now(timezone.utc)
@@ -103,34 +186,19 @@ class MeetingService:
         assert meeting is not None
         return MeetingOut.model_validate(meeting)
 
-    async def get_meeting_detail(self, meeting_id: uuid.UUID) -> MeetingDetail | None:
-        meeting = await self.meetings.get_by_id(meeting_id)
-        if not meeting:
-            return None
-        host_out = UserOut.model_validate(meeting.host)
-        parts = []
-        for p in meeting.participants:
-            parts.append(
-                ParticipantBrief(
-                    user_id=p.user_id,
-                    role=p.role,
-                    joined_at=p.joined_at,
-                    user=UserOut.model_validate(p.user),
-                )
-            )
-        transcripts = [
-            TranscriptBrief.model_validate(t) for t in meeting.transcripts
-        ]
-        return MeetingDetail(
-            id=meeting.id,
-            title=meeting.title,
-            description=meeting.description,
-            host_id=meeting.host_id,
-            created_at=meeting.created_at,
-            host=host_out,
-            participants=parts,
-            transcripts=transcripts,
+    async def list_meetings(
+        self, user: User, query: str | None = None, limit: int = 50
+    ) -> MeetingListResponse:
+        meetings = await self.meetings.list_for_user(user.id, query=query, limit=limit)
+        return MeetingListResponse(
+            items=[self._serialize_meeting_detail(meeting) for meeting in meetings]
         )
+
+    async def get_meeting_detail(
+        self, meeting_id: uuid.UUID, user: User
+    ) -> MeetingDetail | None:
+        meeting = await self._get_meeting_for_user(meeting_id, user)
+        return self._serialize_meeting_detail(meeting)
 
     async def _get_meeting_for_user(self, meeting_id: uuid.UUID, user: User) -> Meeting:
         meeting = await self.meetings.get_by_id(meeting_id)
@@ -170,6 +238,7 @@ class MeetingService:
         user: User,
         saved_file_path: Path,
         ai: AIService,
+        progress_callback: Callable[[str, float], Awaitable[None]] | None = None,
     ) -> ProcessedAudioUpload:
         """
         Transcribe audio, generate structured analysis, persist Transcript, and return
@@ -178,12 +247,17 @@ class MeetingService:
         Raises MeetingNotFoundError, MeetingAccessDeniedError, TranscriptionError.
         """
         meeting = await self._get_meeting_for_user(meeting_id, user)
+        if progress_callback:
+            await progress_callback("transcribing", 0.2)
         transcript_text = await asyncio.to_thread(transcribe_audio, str(saved_file_path))
+        if progress_callback:
+            await progress_callback("cleaning_transcript", 0.5)
         cleaned_transcript = await self._clean_transcript(transcript_text, ai)
+        if progress_callback:
+            await progress_callback("analyzing_transcript", 0.75)
         analysis = await self._analyze_transcript(cleaned_transcript, ai)
-        action_items = [item.model_dump() for item in analysis.action_items]
         now = datetime.now(timezone.utc)
-        await self.meetings.add_transcript(
+        transcript = await self.meetings.add_transcript(
             Transcript(
                 meeting_id=meeting.id,
                 content=transcript_text,
@@ -191,17 +265,22 @@ class MeetingService:
                 cleaned_transcript=cleaned_transcript,
                 summary=analysis.summary,
                 key_points=analysis.key_points,
-                action_items=action_items,
+                action_items=[item.model_dump() for item in analysis.action_items],
                 segment_index=None,
                 created_at=now,
             )
         )
+        await sync_ai_action_items(self.session, meeting, transcript, analysis.action_items)
+        if progress_callback:
+            await progress_callback("indexing_search", 0.9)
+        await SearchService(self.session).index_transcript(meeting, transcript)
         return ProcessedAudioUpload(
+            transcript_id=transcript.id,
             transcript=transcript_text,
             cleaned_transcript=cleaned_transcript,
             summary=analysis.summary,
             key_points=analysis.key_points,
-            action_items=action_items,
+            action_items=transcript.action_items,
         )
 
     async def ask_meeting_question(
@@ -227,6 +306,80 @@ class MeetingService:
                 question.strip(),
             )
         except QuestionAnsweringError:
-            answer = ai.fallback_answer()
+            answer = ai.fallback_answer(transcript_source, question.strip())
 
-        return MeetingAnswer(answer=answer)
+        now = datetime.now(timezone.utc)
+        entry = await self.qa_entries.create(
+            MeetingQAEntry(
+                meeting_id=meeting.id,
+                transcript_id=transcript.id,
+                user_id=user.id,
+                question=question.strip(),
+                answer=answer,
+                created_at=now,
+            )
+        )
+        entry.user = user
+        return MeetingAnswer(answer=answer, entry=serialize_qa_entry(entry))
+
+    async def export_meeting(
+        self, meeting_id: uuid.UUID, user: User, export_format: str
+    ) -> MeetingExportResponse:
+        meeting = await self._get_meeting_for_user(meeting_id, user)
+        detail = self._serialize_meeting_detail(meeting)
+        if export_format == "json":
+            return MeetingExportResponse(
+                format="json",
+                filename=f"{meeting.title[:40].strip() or 'meeting'}-notes.json",
+                content=detail.model_dump_json(indent=2),
+            )
+
+        latest_transcript = detail.transcripts[0] if detail.transcripts else None
+        key_points = "\n".join(f"- {point}" for point in latest_transcript.key_points) if latest_transcript else ""
+        action_items = "\n".join(
+            f"- [{item.status or 'open'}] {item.task}"
+            + (
+                f" (owner: {item.assigned_to})"
+                if item.assigned_to
+                else ""
+            )
+            + (f" (deadline: {item.deadline})" if item.deadline else "")
+            for item in detail.action_items
+        )
+        qa_history = "\n\n".join(
+            f"Q: {entry.question}\nA: {entry.answer}" for entry in detail.qa_history
+        )
+        transcript_text = (
+            latest_transcript.cleaned_transcript
+            or latest_transcript.transcript_text
+            if latest_transcript
+            else ""
+        )
+        content = "\n".join(
+            [
+                f"# {detail.title}",
+                "",
+                f"Created: {detail.created_at.isoformat()}",
+                f"Host: {detail.host.email}",
+                "",
+                "## Summary",
+                latest_transcript.summary if latest_transcript and latest_transcript.summary else "No summary available.",
+                "",
+                "## Key Points",
+                key_points or "- None yet",
+                "",
+                "## Action Items",
+                action_items or "- None yet",
+                "",
+                "## Q&A",
+                qa_history or "No Q&A yet.",
+                "",
+                "## Transcript",
+                transcript_text or "No transcript available.",
+            ]
+        )
+        return MeetingExportResponse(
+            format="markdown",
+            filename=f"{meeting.title[:40].strip() or 'meeting'}-notes.md",
+            content=content,
+        )

@@ -26,3 +26,19 @@ class User(Base):
     participations: Mapped[list["Participant"]] = relationship(
         "Participant", back_populates="user"
     )
+    meeting_questions: Mapped[list["MeetingQAEntry"]] = relationship(
+        "MeetingQAEntry", back_populates="user"
+    )
+    created_action_items: Mapped[list["MeetingActionItem"]] = relationship(
+        "MeetingActionItem",
+        back_populates="created_by",
+        foreign_keys="MeetingActionItem.created_by_id",
+    )
+    assigned_action_items: Mapped[list["MeetingActionItem"]] = relationship(
+        "MeetingActionItem",
+        back_populates="assigned_user",
+        foreign_keys="MeetingActionItem.assigned_user_id",
+    )
+    processing_jobs: Mapped[list["MeetingProcessingJob"]] = relationship(
+        "MeetingProcessingJob", back_populates="created_by"
+    )

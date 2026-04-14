@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.transcript import Transcript
 from app.models.user import User
 from app.repositories.meeting_repository import MeetingRepository
 from app.repositories.transcript_repository import TranscriptRepository
+from app.services.action_item_service import sync_ai_action_items
 from app.services.ai_service import AIService, SummaryGenerationError
+from app.services.search_service import SearchService
 
 
 class TranscriptNotFoundError(Exception):
@@ -82,6 +83,11 @@ class TranscriptService:
 
         transcript.summary = analysis.summary
         transcript.key_points = analysis.key_points
+        meeting = await self.meetings.get_by_id(transcript.meeting_id)
+        if not meeting:
+            raise TranscriptNotFoundError()
         transcript.action_items = [item.model_dump() for item in analysis.action_items]
+        await sync_ai_action_items(self.session, meeting, transcript, analysis.action_items)
+        await SearchService(self.session).index_transcript(meeting, transcript)
         await self.transcripts.save(transcript)
         return transcript

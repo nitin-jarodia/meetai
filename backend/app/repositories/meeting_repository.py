@@ -1,11 +1,14 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.meeting import Meeting
+from app.models.meeting_action_item import MeetingActionItem
+from app.models.meeting_qa import MeetingQAEntry
 from app.models.participant import Participant
+from app.models.processing_job import MeetingProcessingJob
 from app.models.transcript import Transcript
 
 
@@ -13,17 +16,50 @@ class MeetingRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    def _detail_options(self):
+        return (
+            selectinload(Meeting.host),
+            selectinload(Meeting.participants).selectinload(Participant.user),
+            selectinload(Meeting.transcripts),
+            selectinload(Meeting.qa_entries).selectinload(MeetingQAEntry.user),
+            selectinload(Meeting.action_items).selectinload(
+                MeetingActionItem.assigned_user
+            ),
+            selectinload(Meeting.processing_jobs).selectinload(
+                MeetingProcessingJob.created_by
+            ),
+        )
+
     async def get_by_id(self, meeting_id: uuid.UUID) -> Meeting | None:
         result = await self.session.execute(
             select(Meeting)
             .where(Meeting.id == meeting_id)
-            .options(
-                selectinload(Meeting.host),
-                selectinload(Meeting.participants).selectinload(Participant.user),
-                selectinload(Meeting.transcripts),
-            )
+            .options(*self._detail_options())
         )
         return result.scalar_one_or_none()
+
+    async def list_for_user(
+        self, user_id: uuid.UUID, query: str | None = None, limit: int = 50
+    ) -> list[Meeting]:
+        stmt = (
+            select(Meeting)
+            .join(Participant, Participant.meeting_id == Meeting.id)
+            .where(Participant.user_id == user_id)
+            .options(*self._detail_options())
+            .order_by(Meeting.created_at.desc())
+            .limit(limit)
+        )
+        trimmed = (query or "").strip()
+        if trimmed:
+            like = f"%{trimmed}%"
+            stmt = stmt.where(
+                or_(
+                    Meeting.title.ilike(like),
+                    Meeting.description.ilike(like),
+                )
+            )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().unique().all())
 
     async def create(self, meeting: Meeting) -> Meeting:
         self.session.add(meeting)

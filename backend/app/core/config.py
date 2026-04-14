@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     # Optional: path to ffmpeg.exe or its directory. Empty = use bundled ffmpeg (imageio-ffmpeg).
     ffmpeg_path: str = ""
 
+    # Search tuning: SQLite works with the local fallback; PostgreSQL is the
+    # recommended production path and can be paired with pgvector later.
+    search_chunk_chars: int = 600
+    search_embedding_dimensions: int = 64
+    search_prefer_pgvector: bool = True
+
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     @property

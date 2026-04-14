@@ -98,9 +98,35 @@ export type User = {
   created_at: string;
 };
 export type ActionItem = {
+  id?: string | null;
   task: string;
   assigned_to: string | null;
   deadline: string | null;
+  status?: string | null;
+  assigned_user_id?: string | null;
+  source?: string | null;
+  updated_at?: string | null;
+};
+export type MeetingQAEntry = {
+  id: string;
+  transcript_id: string | null;
+  question: string;
+  answer: string;
+  created_at: string;
+  asked_by: User;
+};
+export type MeetingProcessingJob = {
+  id: string;
+  meeting_id: string;
+  filename: string | null;
+  status: string;
+  stage: string;
+  progress: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  created_by: User;
 };
 export type Meeting = {
   id: string;
@@ -127,9 +153,21 @@ export type MeetingDetail = Meeting & {
     segment_index: number | null;
     created_at: string;
   }>;
+  qa_history: MeetingQAEntry[];
+  action_items: ActionItem[];
+  processing_jobs: MeetingProcessingJob[];
 };
 
 export type MeetingTranscript = MeetingDetail["transcripts"][number];
+export type MeetingListResult = { items: MeetingDetail[] };
+export type MeetingSearchResult = {
+  meeting: Meeting;
+  score: number;
+  snippet: string;
+};
+export type MeetingSearchResponse = {
+  items: MeetingSearchResult[];
+};
 
 export const authApi = {
   register: (body: {
@@ -149,6 +187,20 @@ export const authApi = {
 };
 
 export const meetingsApi = {
+  list: (token: string, params?: { q?: string; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.q) search.set("q", params.q);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return apiRequest<MeetingListResult>(`/api/v1/meetings${suffix}`, { token });
+  },
+  search: (token: string, q: string, limit = 20) => {
+    const search = new URLSearchParams({ q, limit: String(limit) });
+    return apiRequest<MeetingSearchResponse>(
+      `/api/v1/meetings/search?${search.toString()}`,
+      { token }
+    );
+  },
   create: (
     token: string,
     body: { title: string; description?: string | null }
@@ -171,8 +223,17 @@ export const meetingsApi = {
       token,
       body: JSON.stringify({ question }),
     }),
+  listJobs: (token: string, meetingId: string) =>
+    apiRequest<MeetingProcessingJob[]>(`/api/v1/meetings/${meetingId}/jobs`, { token }),
+  getJob: (token: string, jobId: string) =>
+    apiRequest<MeetingProcessingJob>(`/api/v1/meetings/jobs/${jobId}`, { token }),
+  exportNotes: (token: string, meetingId: string, format: "markdown" | "json") =>
+    apiRequest<MeetingExportResult>(
+      `/api/v1/meetings/${meetingId}/export?format=${format}`,
+      { token }
+    ),
 
-  /** Multipart upload — Whisper transcription + Groq summary on the server. */
+  /** Multipart upload — queues background transcription + AI processing on the server. */
   uploadAudio: (token: string, meetingId: string, file: File) =>
     uploadMeetingAudio(token, meetingId, file),
 };
@@ -194,16 +255,32 @@ export const transcriptsApi = {
     ),
 };
 
+export const actionItemsApi = {
+  update: (
+    token: string,
+    itemId: string,
+    body: {
+      task?: string | null;
+      assigned_to_name?: string | null;
+      assigned_user_id?: string | null;
+      deadline?: string | null;
+      status?: string | null;
+    }
+  ) =>
+    apiRequest<ActionItem>(`/api/v1/action-items/${itemId}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(body),
+    }),
+};
+
 export type AudioUploadResult = {
-  transcript: string;
-  cleaned_transcript: string;
-  summary: string;
-  key_points: string[];
-  action_items: ActionItem[];
+  job: MeetingProcessingJob;
 };
 
 export type MeetingQuestionResult = {
   answer: string;
+  entry: MeetingQAEntry;
 };
 
 export type TranscriptUpdateResult = {
@@ -219,6 +296,12 @@ export type TranscriptRegenerateResult = {
   action_items: ActionItem[];
   segment_index: number | null;
   created_at: string;
+};
+
+export type MeetingExportResult = {
+  format: string;
+  filename: string;
+  content: string;
 };
 
 async function uploadMeetingAudio(

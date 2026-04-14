@@ -63,6 +63,18 @@ class MeetingAnalysis(BaseModel):
 _SENT_END = re.compile(r"(?<=[。！？!?\.])\s*")
 _TOKEN = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 _QA_MAX_CHARS = 5000
+_ACTION_HINT = re.compile(
+    r"\b(action item|todo|follow up|follow-up|next step|need to|needs to|"
+    r"should|will|owner|deadline|by\s+\w+|before\s+\w+|tomorrow|next\s+\w+)\b",
+    re.IGNORECASE,
+)
+_OWNER_HINT = re.compile(
+    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:will|should|needs to|is going to)\b"
+)
+_DEADLINE_HINT = re.compile(
+    r"\b(by\s+[^,.;]+|before\s+[^,.;]+|tomorrow|next\s+\w+|this\s+\w+)\b",
+    re.IGNORECASE,
+)
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -122,11 +134,107 @@ def _local_fallback_summary(text: str, *, max_sentences: int = 7) -> str:
     )
 
 
+def _top_sentences(text: str, *, limit: int = 4) -> list[str]:
+    sents = _split_sentences(text)
+    if not sents:
+        return []
+
+    all_tokens: list[str] = []
+    per_sent: list[list[str]] = []
+    for sent in sents:
+        tokens = [token.lower() for token in _TOKEN.findall(sent)]
+        per_sent.append(tokens)
+        all_tokens.extend(tokens)
+
+    freq = Counter(all_tokens)
+
+    def score(i: int) -> float:
+        tokens = per_sent[i]
+        if not tokens:
+            return 0.0
+        position = 1.0 / (1.0 + 0.15 * i)
+        density = sum(1.0 / (1.0 + math.log(1 + freq[word])) for word in tokens) / len(
+            tokens
+        )
+        return density * position
+
+    ranked = sorted(range(len(sents)), key=score, reverse=True)
+    chosen = sorted(ranked[:limit])
+    return [sents[index] for index in chosen if sents[index].strip()]
+
+
+def _local_fallback_key_points(text: str, *, limit: int = 4) -> list[str]:
+    points: list[str] = []
+    seen: set[str] = set()
+    for sentence in _top_sentences(text, limit=limit + 2):
+        cleaned = sentence.strip("•- \n\t")
+        normalized = cleaned.lower()
+        if len(cleaned) < 20 or normalized in seen:
+            continue
+        seen.add(normalized)
+        points.append(cleaned)
+        if len(points) >= limit:
+            break
+    return points
+
+
+def _local_fallback_action_items(text: str, *, limit: int = 5) -> list[ActionItem]:
+    actions: list[ActionItem] = []
+    seen: set[str] = set()
+    for sentence in _split_sentences(text):
+        cleaned = sentence.strip("•- \n\t")
+        lowered = cleaned.lower()
+        if len(cleaned) < 12 or lowered in seen:
+            continue
+        if not _ACTION_HINT.search(cleaned):
+            continue
+
+        owner_match = _OWNER_HINT.search(cleaned)
+        deadline_match = _DEADLINE_HINT.search(cleaned)
+        actions.append(
+            ActionItem(
+                task=cleaned,
+                assigned_to=owner_match.group(1) if owner_match else None,
+                deadline=deadline_match.group(1) if deadline_match else None,
+            )
+        )
+        seen.add(lowered)
+        if len(actions) >= limit:
+            break
+    return actions
+
+
+def _local_fallback_answer(transcript: str, question: str) -> str:
+    question_tokens = {token.lower() for token in _TOKEN.findall(question) if len(token) > 2}
+    if not question_tokens:
+        return "Not mentioned in the meeting"
+
+    best_sentence = ""
+    best_score = 0.0
+    for sentence in _split_sentences(transcript):
+        sentence_tokens = {token.lower() for token in _TOKEN.findall(sentence)}
+        if not sentence_tokens:
+            continue
+        overlap = len(question_tokens & sentence_tokens)
+        if overlap <= 0:
+            continue
+        score = overlap / max(len(question_tokens), 1)
+        if any(char.isdigit() for char in question) and any(char.isdigit() for char in sentence):
+            score += 0.2
+        if score > best_score:
+            best_score = score
+            best_sentence = sentence.strip()
+
+    if not best_sentence:
+        return "Not mentioned in the meeting"
+    return best_sentence
+
+
 def _local_fallback_analysis(text: str) -> MeetingAnalysis:
     return MeetingAnalysis(
         summary=_local_fallback_summary(text),
-        key_points=[],
-        action_items=[],
+        key_points=_local_fallback_key_points(text),
+        action_items=_local_fallback_action_items(text),
     )
 
 
@@ -271,7 +379,7 @@ class GroqProvider(LLMProvider):
         if not question.strip():
             raise QuestionAnsweringError("No question provided.")
         if not self._client:
-            raise QuestionAnsweringError("Groq API key is not configured.")
+            return _local_fallback_answer(transcript, question)
 
         context = transcript.strip()
         if len(context) > _QA_MAX_CHARS:
@@ -357,7 +465,9 @@ class AIService:
     def answer_question(self, transcript: str, question: str) -> str:
         return self._provider.answer_question(transcript, question)
 
-    def fallback_answer(self) -> str:
+    def fallback_answer(self, transcript: str, question: str) -> str:
+        if transcript.strip() and question.strip():
+            return _local_fallback_answer(transcript, question)
         return "AI is temporarily unavailable. Please try again."
 
 

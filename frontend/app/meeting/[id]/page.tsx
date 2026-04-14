@@ -9,10 +9,14 @@ import { ActionItemsList } from "@/components/meeting/ActionItemsList";
 import { QASection } from "@/components/meeting/QASection";
 import { SummaryCard } from "@/components/meeting/SummaryCard";
 import { TranscriptSection } from "@/components/meeting/TranscriptSection";
+import { useMeetingSocket } from "@/hooks/useMeetingSocket";
 import {
+  actionItemsApi,
+  ApiError,
   meetingsApi,
   transcriptsApi,
   type MeetingDetail,
+  type MeetingProcessingJob,
   type MeetingTranscript,
 } from "@/services/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -23,16 +27,21 @@ export default function MeetingRoomPage() {
   const token = useRequireAuth();
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [joinRequired, setJoinRequired] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
   const [editedTranscriptText, setEditedTranscriptText] = useState("");
   const [savingTranscriptId, setSavingTranscriptId] = useState<string | null>(null);
   const [regeneratingTranscriptId, setRegeneratingTranscriptId] = useState<string | null>(
     null
   );
+  const [savingActionItemId, setSavingActionItemId] = useState<string | null>(null);
+  const [actionItemError, setActionItemError] = useState<string | null>(null);
   const [transcriptActionError, setTranscriptActionError] = useState<string | null>(null);
   const [transcriptActionMessage, setTranscriptActionMessage] = useState<string | null>(
     null
@@ -41,28 +50,95 @@ export default function MeetingRoomPage() {
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   const [qaHistory, setQaHistory] = useState<
-    Array<{ question: string; answer: string }>
+    Array<{
+      id?: string;
+      question: string;
+      answer: string;
+      asked_by?: string | null;
+      created_at?: string;
+    }>
   >([]);
 
-  useEffect(() => {
+  async function loadMeeting() {
     if (!token || !id) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const d = await meetingsApi.get(token, id);
-        if (!cancelled) setDetail(d);
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load meeting"
-          );
-        }
+    try {
+      const d = await meetingsApi.get(token, id);
+      setDetail(d);
+      setQaHistory(
+        d.qa_history.map((entry) => ({
+          id: entry.id,
+          question: entry.question,
+          answer: entry.answer,
+          asked_by: entry.asked_by.full_name || entry.asked_by.email,
+          created_at: entry.created_at,
+        }))
+      );
+      setJoinRequired(false);
+      setError(null);
+      if (!activeJobId && d.processing_jobs[0]?.status !== "completed") {
+        setActiveJobId(d.processing_jobs[0]?.id ?? null);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setJoinRequired(true);
+        setError(null);
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to load meeting");
+    }
+  }
+
+  useEffect(() => {
+    void loadMeeting();
+    // `loadMeeting` reads current state and should rerun on token/id changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, id]);
+
+  const { connected: socketConnected } = useMeetingSocket(
+    id,
+    token ?? undefined,
+    (event) => {
+    if (event.type === "job_updated") {
+      const payload = event.job as MeetingProcessingJob;
+      setDetail((prev) => {
+        if (!prev) return prev;
+        const remaining = prev.processing_jobs.filter((job) => job.id !== payload.id);
+        return {
+          ...prev,
+          processing_jobs: [payload, ...remaining],
+        };
+      });
+      setActiveJobId(payload.id);
+      if (payload.status === "completed") {
+        setUploadMessage("Audio processed successfully. The latest meeting notes are ready.");
+        void loadMeeting();
+      }
+      if (payload.status === "failed") {
+        setUploadError(payload.error_message || "Audio processing failed");
+      }
+    }
+    if (event.type === "transcript_ready") {
+      setUploadMessage("Audio processed successfully. The latest meeting notes are ready.");
+      void loadMeeting();
+    }
+    if (event.type === "job_failed") {
+      setUploadError(event.error);
+    }
+    }
+  );
+
+  async function joinMeeting() {
+    if (!token) return;
+    setJoining(true);
+    try {
+      await meetingsApi.join(token, id);
+      await loadMeeting();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to join meeting");
+    } finally {
+      setJoining(false);
+    }
+  }
 
   async function handleAskSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -80,8 +156,11 @@ export default function MeetingRoomPage() {
       const result = await meetingsApi.ask(token, id, trimmedQuestion);
       setQaHistory((prev) => [
         {
+          id: result.entry.id,
           question: trimmedQuestion,
           answer: result.answer,
+          asked_by: result.entry.asked_by.full_name || result.entry.asked_by.email,
+          created_at: result.entry.created_at,
         },
         ...prev,
       ]);
@@ -104,6 +183,19 @@ export default function MeetingRoomPage() {
         transcripts: prev.transcripts.map((transcript) =>
           transcript.id === transcriptId ? { ...transcript, ...updates } : transcript
         ),
+      };
+    });
+  }
+
+  function updateJobInDetail(job: MeetingProcessingJob) {
+    setDetail((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        processing_jobs: [
+          job,
+          ...prev.processing_jobs.filter((existing) => existing.id !== job.id),
+        ],
       };
     });
   }
@@ -158,6 +250,7 @@ export default function MeetingRoomPage() {
         key_points: result.key_points,
         action_items: result.action_items,
       });
+      await loadMeeting();
       setTranscriptActionMessage("Summary regenerated successfully.");
     } catch (err) {
       setTranscriptActionError(
@@ -171,6 +264,7 @@ export default function MeetingRoomPage() {
   const latestTranscript = detail?.transcripts[0] ?? null;
   const visibleTranscript =
     latestTranscript?.cleaned_transcript ?? latestTranscript?.transcript_text ?? "";
+  const latestJob = detail?.processing_jobs[0] ?? null;
 
   function formatMeetingDate(value: string) {
     return new Date(value).toLocaleDateString(undefined, {
@@ -178,6 +272,65 @@ export default function MeetingRoomPage() {
       day: "numeric",
       year: "numeric",
     });
+  }
+
+  async function handleActionItemUpdate(
+    itemId: string,
+    updates: {
+      task?: string | null;
+      assigned_to_name?: string | null;
+      assigned_user_id?: string | null;
+      deadline?: string | null;
+      status?: string | null;
+    }
+  ) {
+    if (!token) return;
+    setSavingActionItemId(itemId);
+    setActionItemError(null);
+    try {
+      const updated = await actionItemsApi.update(token, itemId, updates);
+      setDetail((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          action_items: prev.action_items.map((item) =>
+            item.id === itemId ? updated : item
+          ),
+        };
+      });
+    } catch (err) {
+      setActionItemError(err instanceof Error ? err.message : "Failed to save action item");
+    } finally {
+      setSavingActionItemId(null);
+    }
+  }
+
+  async function handleExport(format: "markdown" | "json") {
+    if (!token) return;
+    try {
+      const exported = await meetingsApi.exportNotes(token, id, format);
+      const blob = new Blob([exported.content], {
+        type: format === "json" ? "application/json" : "text/markdown",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = exported.filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export meeting notes");
+    }
+  }
+
+  async function handleShare() {
+    const shareUrl = window.location.href;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareUrl);
+      setUploadMessage("Meeting link copied. Teammates can open it and tap Join meeting.");
+      return;
+    }
+    setUploadMessage(`Share this link: ${shareUrl}`);
   }
 
   if (!token) {
@@ -200,6 +353,23 @@ export default function MeetingRoomPage() {
             {error}
           </p>
         )}
+
+        {joinRequired ? (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h1 className="text-2xl font-semibold text-slate-900">Join this meeting</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              You have the meeting link but are not a participant yet.
+            </p>
+            <button
+              type="button"
+              onClick={() => void joinMeeting()}
+              disabled={joining}
+              className="mt-4 rounded-2xl bg-brand-600 px-4 py-3 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
+            >
+              {joining ? "Joining…" : "Join meeting"}
+            </button>
+          </section>
+        ) : null}
 
         {detail && (
           <>
@@ -230,6 +400,32 @@ export default function MeetingRoomPage() {
                   <span className="rounded-full bg-slate-100 px-3 py-1">
                     Transcript versions: {detail.transcripts.length}
                   </span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1">
+                    Socket: {socketConnected ? "Live" : "Offline"}
+                  </span>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleShare()}
+                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Copy share link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleExport("markdown")}
+                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Export Markdown
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleExport("json")}
+                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Export JSON
+                  </button>
                 </div>
               </div>
 
@@ -271,13 +467,11 @@ export default function MeetingRoomPage() {
                       setUploadError(null);
                       setUploadMessage(null);
                       try {
-                        await meetingsApi.uploadAudio(token, id, audioFile);
-                        setUploadMessage(
-                          "Audio processed successfully. The latest meeting notes are ready."
-                        );
+                        const result = await meetingsApi.uploadAudio(token, id, audioFile);
+                        updateJobInDetail(result.job);
+                        setActiveJobId(result.job.id);
+                        setUploadMessage("Audio queued. Live updates will appear here.");
                         setAudioFile(null);
-                        const refreshed = await meetingsApi.get(token, id);
-                        setDetail(refreshed);
                       } catch (err) {
                         setUploadError(
                           err instanceof Error ? err.message : "Upload failed"
@@ -300,6 +494,22 @@ export default function MeetingRoomPage() {
                   <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                     {uploadMessage}
                   </p>
+                ) : null}
+                {latestJob ? (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-sm font-medium text-slate-800">
+                      Latest job: {latestJob.stage.replaceAll("_", " ")}
+                    </p>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                      <div
+                        className="h-full bg-brand-600 transition-all"
+                        style={{ width: `${Math.max(5, latestJob.progress * 100)}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {latestJob.status} {activeJobId === latestJob.id ? "· tracking live" : ""}
+                    </p>
+                  </div>
                 ) : null}
               </div>
             </section>
@@ -337,7 +547,13 @@ export default function MeetingRoomPage() {
               )}
             </section>
 
-            <ActionItemsList action_items={latestTranscript?.action_items ?? []} />
+            <ActionItemsList
+              action_items={detail.action_items}
+              participants={detail.participants.map((participant) => participant.user)}
+              savingId={savingActionItemId}
+              error={actionItemError}
+              onUpdate={handleActionItemUpdate}
+            />
 
             <TranscriptSection
               transcript={visibleTranscript}
@@ -378,7 +594,7 @@ export default function MeetingRoomPage() {
           </>
         )}
 
-        {!detail && !error && (
+        {!detail && !error && !joinRequired && (
           <p className="text-slate-500">Loading meeting…</p>
         )}
       </div>

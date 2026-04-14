@@ -26,7 +26,9 @@ async def meeting_socket(websocket: WebSocket, meeting_id: uuid.UUID):
         )
         while True:
             data = await websocket.receive_text()
-            # Echo for scaffolding — replace with events (chat, presence, signals).
-            await websocket.send_json({"type": "echo", "payload": data})
+            if data == "ping":
+                await websocket.send_json({"type": "pong"})
+            else:
+                await websocket.send_json({"type": "ack", "payload": data})
     except WebSocketDisconnect:
         manager.disconnect(meeting_id, websocket)

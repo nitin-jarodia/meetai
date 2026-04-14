@@ -5,6 +5,10 @@ from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.models.meeting_action_item import MeetingActionItem
+from app.models.meeting_qa import MeetingQAEntry
+from app.models.processing_job import MeetingProcessingJob
+from app.models.search_chunk import MeetingSearchChunk
 from app.models.transcript import Transcript
 
 
@@ -32,4 +36,28 @@ class Meeting(Base):
         back_populates="meeting",
         cascade="all, delete-orphan",
         order_by=Transcript.created_at.desc(),
+    )
+    qa_entries: Mapped[list[MeetingQAEntry]] = relationship(
+        MeetingQAEntry,
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        order_by=MeetingQAEntry.created_at.desc(),
+    )
+    action_items: Mapped[list[MeetingActionItem]] = relationship(
+        MeetingActionItem,
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        order_by=MeetingActionItem.created_at.desc(),
+    )
+    processing_jobs: Mapped[list[MeetingProcessingJob]] = relationship(
+        MeetingProcessingJob,
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        order_by=MeetingProcessingJob.created_at.desc(),
+    )
+    search_chunks: Mapped[list[MeetingSearchChunk]] = relationship(
+        MeetingSearchChunk,
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        order_by=MeetingSearchChunk.chunk_index.asc(),
     )

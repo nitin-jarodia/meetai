@@ -1,8 +1,11 @@
 import type { FormEvent } from "react";
 
 type QAHistoryItem = {
+  id?: string;
   question: string;
   answer: string;
+  asked_by?: string | null;
+  created_at?: string;
 };
 
 type QASectionProps = {
@@ -73,7 +76,7 @@ export function QASection({
       ) : (
         <div className="mt-5 space-y-4">
           {history.map((item, index) => (
-            <div key={`${item.question}-${index}`} className="space-y-3">
+            <div key={item.id ?? `${item.question}-${index}`} className="space-y-3">
               <div className="flex justify-end">
                 <div className="max-w-[85%] rounded-2xl bg-brand-600 px-4 py-3 text-sm text-white shadow-sm">
                   {item.question}
@@ -81,7 +84,16 @@ export function QASection({
               </div>
               <div className="flex justify-start">
                 <div className="max-w-[85%] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  {item.answer}
+                  <p>{item.answer}</p>
+                  {item.asked_by || item.created_at ? (
+                    <p className="mt-2 text-xs text-slate-400">
+                      {item.asked_by ? `Asked by ${item.asked_by}` : null}
+                      {item.asked_by && item.created_at ? " · " : null}
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleString()
+                        : null}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>
