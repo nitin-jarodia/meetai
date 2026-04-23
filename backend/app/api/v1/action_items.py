@@ -26,17 +26,25 @@ async def update_action_item(
     current_user: User = Depends(get_current_user),
 ):
     service = ActionItemService(db)
+
+    # Only forward `due_at` when the client actually sent the key, so we don't
+    # wipe a previously set deadline on updates that only change e.g. status.
+    fields = body.model_dump(exclude_unset=True)
+    update_kwargs: dict[str, object] = dict(
+        task=body.task,
+        status=body.status,
+        deadline=body.deadline,
+        assigned_to_name=body.assigned_to_name,
+        assigned_user_id=body.assigned_user_id,
+    )
+    if "due_at" in fields:
+        update_kwargs["due_at"] = body.due_at
+
     try:
         item = await service.update_item(
             item_id,
             current_user,
-            ActionItemUpdate(
-                task=body.task,
-                status=body.status,
-                deadline=body.deadline,
-                assigned_to_name=body.assigned_to_name,
-                assigned_user_id=body.assigned_user_id,
-            ),
+            ActionItemUpdate(**update_kwargs),
         )
     except ActionItemNotFoundError:
         raise HTTPException(

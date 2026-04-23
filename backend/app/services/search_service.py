@@ -1,6 +1,7 @@
+"""Semantic + lexical search across meetings owned by a user."""
+
 from __future__ import annotations
 
-import math
 import re
 import uuid
 from collections import Counter
@@ -16,8 +17,13 @@ from app.models.transcript import Transcript
 from app.models.user import User
 from app.repositories.meeting_repository import MeetingRepository
 from app.repositories.search_repository import SearchRepository
+from app.services.embedding_service import cosine_similarity, get_embedding_provider
 
 _TOKEN = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+
+
+def _tokenize(text: str) -> list[str]:
+    return [t.lower() for t in _TOKEN.findall(text)]
 
 
 @dataclass(slots=True)
@@ -28,32 +34,14 @@ class MeetingSearchResult:
     matched_text: str
 
 
-def _tokenize(text: str) -> list[str]:
-    return [token.lower() for token in _TOKEN.findall(text)]
-
-
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if not norm_a or not norm_b:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
-def _embed_text(text: str, dimensions: int) -> list[float]:
-    counts = Counter(_tokenize(text))
-    if not counts:
-        return [0.0] * dimensions
-    vector = [0.0] * dimensions
-    for token, count in counts.items():
-        index = hash(token) % dimensions
-        sign = 1.0 if (hash(f"sign:{token}") % 2 == 0) else -1.0
-        vector[index] += count * sign
-    norm = math.sqrt(sum(x * x for x in vector)) or 1.0
-    return [value / norm for value in vector]
+@dataclass(slots=True)
+class RAGPassage:
+    meeting_id: uuid.UUID
+    meeting_title: str
+    transcript_id: uuid.UUID
+    chunk_index: int
+    content: str
+    score: float
 
 
 def _chunk_text(text: str, chunk_chars: int) -> list[str]:
@@ -85,6 +73,7 @@ class SearchService:
         self.session = session
         self.meetings = MeetingRepository(session)
         self.chunks = SearchRepository(session)
+        self.embedder = get_embedding_provider()
 
     async def index_transcript(self, meeting: Meeting, transcript: Transcript) -> None:
         source_text = (
@@ -93,6 +82,12 @@ class SearchService:
             or (transcript.content or "").strip()
         )
         chunk_values = _chunk_text(source_text, settings.search_chunk_chars)
+        if not chunk_values:
+            await self.chunks.replace_for_transcript(transcript.id, [])
+            return
+
+        vectors = self.embedder.embed_many(chunk_values)
+        version = self.embedder.version
         now = datetime.now(timezone.utc)
         records = [
             MeetingSearchChunk(
@@ -100,12 +95,17 @@ class SearchService:
                 transcript_id=transcript.id,
                 chunk_index=index,
                 content=value,
-                embedding=_embed_text(value, settings.search_embedding_dimensions),
+                embedding=vectors[index],
+                embedding_version=version,
                 created_at=now,
             )
             for index, value in enumerate(chunk_values)
         ]
         await self.chunks.replace_for_transcript(transcript.id, records)
+
+    # ------------------------------------------------------------------
+    # Ranked meeting search
+    # ------------------------------------------------------------------
 
     async def search_meetings(
         self, user: User, query: str, limit: int = 20
@@ -114,20 +114,21 @@ class SearchService:
         if not trimmed:
             return []
 
-        accessible = await self.meetings.list_for_user(user.id, limit=100)
+        accessible = await self.meetings.list_for_user(user.id, limit=200)
         if not accessible:
             return []
 
-        meeting_ids = [meeting.id for meeting in accessible]
+        meeting_ids = [m.id for m in accessible]
         chunks = await self.chunks.list_for_meeting_ids(meeting_ids)
         chunks_by_meeting: dict[uuid.UUID, list[MeetingSearchChunk]] = {}
         for chunk in chunks:
             chunks_by_meeting.setdefault(chunk.meeting_id, []).append(chunk)
 
-        query_embedding = _embed_text(trimmed, settings.search_embedding_dimensions)
+        query_embedding = self.embedder.embed(trimmed)
+        query_version = self.embedder.version
         query_tokens = set(_tokenize(trimmed))
-        results: list[MeetingSearchResult] = []
 
+        results: list[MeetingSearchResult] = []
         for meeting in accessible:
             base_text = " ".join(
                 filter(None, [meeting.title, meeting.description or ""])
@@ -144,11 +145,15 @@ class SearchService:
             best_lexical = 0.0
             for chunk in chunks_by_meeting.get(meeting.id, []):
                 lexical = (
-                    len(query_tokens & set(_tokenize(chunk.content))) / max(len(query_tokens), 1)
+                    len(query_tokens & set(_tokenize(chunk.content)))
+                    / max(len(query_tokens), 1)
                     if query_tokens
                     else 0.0
                 )
-                semantic = _cosine_similarity(query_embedding, chunk.embedding)
+                # Only compare semantic similarity when the two vectors share backend.
+                semantic = 0.0
+                if chunk.embedding_version == query_version:
+                    semantic = cosine_similarity(query_embedding, chunk.embedding)
                 if semantic + lexical > best_semantic + best_lexical:
                     best_chunk = chunk.content
                     best_semantic = semantic
@@ -166,7 +171,8 @@ class SearchService:
                     )
                     transcript_tokens = set(_tokenize(transcript_text))
                     transcript_bonus = (
-                        len(query_tokens & transcript_tokens) / max(len(query_tokens), 1)
+                        len(query_tokens & transcript_tokens)
+                        / max(len(query_tokens), 1)
                         if query_tokens
                         else 0.0
                     )
@@ -187,5 +193,61 @@ class SearchService:
                 )
             )
 
-        results.sort(key=lambda item: (item.score, item.meeting.created_at), reverse=True)
+        results.sort(key=lambda r: (r.score, r.meeting.created_at), reverse=True)
         return results[:limit]
+
+    # ------------------------------------------------------------------
+    # Cross-meeting RAG retrieval
+    # ------------------------------------------------------------------
+
+    async def retrieve_passages(
+        self, user: User, query: str, *, top_k: int = 6
+    ) -> list[RAGPassage]:
+        """Return the top-k relevant transcript chunks across the user's meetings."""
+        trimmed = query.strip()
+        if not trimmed:
+            return []
+        accessible = await self.meetings.list_for_user(user.id, limit=500)
+        if not accessible:
+            return []
+
+        meetings_by_id = {m.id: m for m in accessible}
+        chunks = await self.chunks.list_for_meeting_ids(list(meetings_by_id.keys()))
+        if not chunks:
+            return []
+
+        query_embedding = self.embedder.embed(trimmed)
+        query_version = self.embedder.version
+        query_tokens = set(_tokenize(trimmed))
+
+        scored: list[tuple[float, MeetingSearchChunk]] = []
+        for chunk in chunks:
+            lexical = (
+                len(query_tokens & set(_tokenize(chunk.content)))
+                / max(len(query_tokens), 1)
+                if query_tokens
+                else 0.0
+            )
+            semantic = 0.0
+            if chunk.embedding_version == query_version:
+                semantic = cosine_similarity(query_embedding, chunk.embedding)
+            score = 0.65 * semantic + 0.35 * lexical
+            if score <= 0:
+                continue
+            scored.append((score, chunk))
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        top = scored[:top_k]
+        return [
+            RAGPassage(
+                meeting_id=chunk.meeting_id,
+                meeting_title=meetings_by_id[chunk.meeting_id].title
+                if chunk.meeting_id in meetings_by_id
+                else "",
+                transcript_id=chunk.transcript_id,
+                chunk_index=chunk.chunk_index,
+                content=chunk.content,
+                score=float(score),
+            )
+            for score, chunk in top
+        ]

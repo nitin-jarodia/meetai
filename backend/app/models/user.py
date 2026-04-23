@@ -42,3 +42,9 @@ class User(Base):
     processing_jobs: Mapped[list["MeetingProcessingJob"]] = relationship(
         "MeetingProcessingJob", back_populates="created_by"
     )
+    notification_preference: Mapped["NotificationPreference | None"] = relationship(
+        "NotificationPreference",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

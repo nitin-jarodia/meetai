@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { ActionItemsList } from "@/components/meeting/ActionItemsList";
+import { AudioTranscriptPlayer } from "@/components/meeting/AudioTranscriptPlayer";
+import { LiveSummaryCard } from "@/components/meeting/LiveSummaryCard";
 import { LiveTranscriptBar } from "@/components/meeting/LiveTranscriptBar";
 import { QASection } from "@/components/meeting/QASection";
 import { SummaryCard } from "@/components/meeting/SummaryCard";
@@ -18,6 +20,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useLiveTranscription } from "@/hooks/useLiveTranscription";
 import { useMeetingSocket } from "@/hooks/useMeetingSocket";
+import { useToast } from "@/components/ui/Toast";
 import { getWebSocketBaseUrl } from "@/lib/publicApi";
 import {
   actionItemsApi,
@@ -59,6 +62,12 @@ export default function MeetingRoomPage() {
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   const [liveSocket, setLiveSocket] = useState<WebSocket | null>(null);
+  const [liveSummary, setLiveSummary] = useState<{
+    summary: string;
+    updatedAt: string;
+    charCount: number | null;
+  } | null>(null);
+  const { showToast } = useToast();
   const [qaHistory, setQaHistory] = useState<
     Array<{
       id?: string;
@@ -145,6 +154,22 @@ export default function MeetingRoomPage() {
     }
     if (event.type === "job_failed") {
       setUploadError(event.error);
+    }
+    if (event.type === "live_summary_updated") {
+      setLiveSummary({
+        summary: event.summary,
+        updatedAt: new Date().toISOString(),
+        charCount: typeof event.char_count === "number" ? event.char_count : null,
+      });
+    }
+    if (event.type === "action_item_due_soon") {
+      const task = event.action_item.task || "Action item";
+      showToast(`Due soon: ${truncate(task, 80)}`, "info");
+    }
+    if (event.type === "action_item_overdue") {
+      const task = event.action_item.task || "Action item";
+      showToast(`Overdue: ${truncate(task, 80)}`, "error");
+      void loadMeeting();
     }
     }
   );
@@ -295,6 +320,11 @@ export default function MeetingRoomPage() {
     latestTranscript?.cleaned_transcript ?? latestTranscript?.transcript_text ?? "";
   const latestJob = detail?.processing_jobs[0] ?? null;
 
+  function truncate(value: string, max: number) {
+    if (value.length <= max) return value;
+    return `${value.slice(0, max - 1)}…`;
+  }
+
   function formatMeetingDate(value: string) {
     return new Date(value).toLocaleDateString(undefined, {
       month: "long",
@@ -319,6 +349,7 @@ export default function MeetingRoomPage() {
       assigned_to_name?: string | null;
       assigned_user_id?: string | null;
       deadline?: string | null;
+      due_at?: string | null;
       status?: string | null;
     }
   ) {
@@ -568,6 +599,22 @@ export default function MeetingRoomPage() {
                 {uploadError ? <p className="text-sm text-semantic-danger">{uploadError}</p> : null}
                 {uploadMessage ? <p className="text-sm text-semantic-success">{uploadMessage}</p> : null}
               </Card>
+
+              <LiveSummaryCard
+                summary={liveSummary?.summary ?? null}
+                updatedAt={liveSummary?.updatedAt ?? null}
+                charCount={liveSummary?.charCount ?? null}
+                isRecording={isRecording}
+              />
+
+              {latestTranscript ? (
+                <AudioTranscriptPlayer
+                  token={token}
+                  transcriptId={latestTranscript.id}
+                  language={latestTranscript.language ?? null}
+                  hasAudio={Boolean(latestTranscript.has_audio)}
+                />
+              ) : null}
 
               <TranscriptSection
                 transcript={visibleTranscript}

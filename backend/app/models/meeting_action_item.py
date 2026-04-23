@@ -27,7 +27,15 @@ class MeetingActionItem(Base):
     )
     task: Mapped[str] = mapped_column(Text, nullable=False)
     assigned_to_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Freeform human-readable deadline ("next Friday"). Kept for backwards compatibility.
     deadline: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Parsed, UTC-aware deadline used by the reminder scheduler.
+    due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_reminded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="open")
     source: Mapped[str] = mapped_column(String(50), nullable=False, default="ai")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

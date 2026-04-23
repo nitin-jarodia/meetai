@@ -102,10 +102,49 @@ export type ActionItem = {
   task: string;
   assigned_to: string | null;
   deadline: string | null;
+  due_at?: string | null;
   status?: string | null;
   assigned_user_id?: string | null;
   source?: string | null;
   updated_at?: string | null;
+};
+
+export type TranscriptSegment = {
+  id: string;
+  order_index: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  speaker_label: string;
+  confidence: number | null;
+};
+
+export type TranscriptSegmentsResponse = {
+  transcript_id: string;
+  language: string | null;
+  duration_ms: number | null;
+  has_audio: boolean;
+  segments: TranscriptSegment[];
+};
+
+export type TranscriptTranslation = {
+  transcript_id: string;
+  target_language: string;
+  translated_text: string;
+};
+
+export type AskCitation = {
+  meeting_id: string;
+  meeting_title: string;
+  transcript_id: string;
+  chunk_index: number;
+  score: number;
+  snippet: string;
+};
+
+export type AskAcrossMeetingsResponse = {
+  answer: string;
+  citations: AskCitation[];
 };
 export type MeetingQAEntry = {
   id: string;
@@ -147,9 +186,15 @@ export type MeetingDetail = Meeting & {
     id: string;
     transcript_text: string;
     cleaned_transcript?: string | null;
+    translated_text?: string | null;
+    translated_language?: string | null;
     summary?: string | null;
     key_points: string[];
     action_items: ActionItem[];
+    language?: string | null;
+    duration_ms?: number | null;
+    audio_path?: string | null;
+    has_audio?: boolean;
     segment_index: number | null;
     created_at: string;
   }>;
@@ -253,6 +298,32 @@ export const transcriptsApi = {
         token,
       }
     ),
+  segments: (token: string, transcriptId: string) =>
+    apiRequest<TranscriptSegmentsResponse>(
+      `/api/v1/transcripts/${transcriptId}/segments`,
+      { token }
+    ),
+  translate: (token: string, transcriptId: string, target: string) =>
+    apiRequest<TranscriptTranslation>(
+      `/api/v1/transcripts/${transcriptId}/translate?target=${encodeURIComponent(target)}`,
+      { method: "POST", token }
+    ),
+  audioUrl: (token: string, transcriptId: string) =>
+    `${API_BASE}/api/v1/transcripts/${transcriptId}/audio?token=${encodeURIComponent(
+      token
+    )}`,
+};
+
+export const aiApi = {
+  askAcrossMeetings: (
+    token: string,
+    body: { question: string; top_k?: number }
+  ) =>
+    apiRequest<AskAcrossMeetingsResponse>(`/api/v1/ai/ask`, {
+      method: "POST",
+      token,
+      body: JSON.stringify(body),
+    }),
 };
 
 export const actionItemsApi = {
@@ -264,6 +335,7 @@ export const actionItemsApi = {
       assigned_to_name?: string | null;
       assigned_user_id?: string | null;
       deadline?: string | null;
+      due_at?: string | null;
       status?: string | null;
     }
   ) =>

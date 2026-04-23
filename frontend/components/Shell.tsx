@@ -21,6 +21,11 @@ const navItems = [
     href: "/dashboard",
     icon: "M7 3v3M17 3v3M4 8h16M5 6h14a1 1 0 0 1 1 1v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a1 1 0 0 1 1-1Z",
   },
+  {
+    label: "Ask",
+    href: "/ask",
+    icon: "M12 18v.01M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-1 .4-1.5 1-1.5 2.2",
+  },
 ];
 
 export function Shell({ title, children, sidebarUser, sidebarFooter }: ShellProps) {

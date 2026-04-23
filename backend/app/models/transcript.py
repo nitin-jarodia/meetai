@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Text, Uuid
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -19,11 +19,17 @@ class Transcript(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     transcript_text: Mapped[str] = mapped_column(Text, nullable=False)
     cleaned_transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translated_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    translated_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_points: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     action_items: Mapped[list[dict[str, str | None]]] = mapped_column(
         JSON, nullable=False, default=list
     )
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    audio_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    audio_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     segment_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -41,4 +47,10 @@ class Transcript(Base):
         back_populates="transcript",
         cascade="all, delete-orphan",
         order_by="MeetingSearchChunk.chunk_index.asc()",
+    )
+    segments: Mapped[list["TranscriptSegment"]] = relationship(
+        "TranscriptSegment",
+        back_populates="transcript",
+        cascade="all, delete-orphan",
+        order_by="TranscriptSegment.order_index.asc()",
     )

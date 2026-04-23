@@ -7,6 +7,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.database import AsyncSessionLocal
 from app.core.security import decode_token
 from app.repositories.user_repository import UserRepository
+from app.services.ai_service import AIService
+from app.services.live_summary import LiveSummaryEngine
 from app.services.transcription_service import transcribe_chunk
 from app.websocket.manager import manager
 
@@ -34,6 +36,12 @@ async def meeting_socket(websocket: WebSocket, meeting_id: uuid.UUID):
         return
 
     await manager.connect(meeting_id, websocket)
+
+    async def emit_to_room(payload: dict) -> None:
+        await manager.broadcast_to_meeting(str(meeting_id), payload)
+
+    summary_engine = LiveSummaryEngine(AIService(), emit_to_room)
+
     try:
         await websocket.send_json(
             {
@@ -62,6 +70,10 @@ async def meeting_socket(websocket: WebSocket, meeting_id: uuid.UUID):
                             "user_id": str(user.id),
                         },
                     )
+                    summary_engine.ingest(text)
+                    # Fire-and-forget: the engine debounces internally so this
+                    # is safe to call on every incoming chunk.
+                    asyncio.create_task(summary_engine.maybe_emit())
                 continue
 
             if payload_text is None:
@@ -78,10 +90,16 @@ async def meeting_socket(websocket: WebSocket, meeting_id: uuid.UUID):
             except json.JSONDecodeError:
                 continue
 
-            if body.get("type") == "ping":
+            msg_type = body.get("type")
+            if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
-            elif body.get("type") == "stop":
+            elif msg_type == "stop":
                 break
+            elif msg_type == "transcript_delta":
+                text = str(body.get("text") or "").strip()
+                if text:
+                    summary_engine.ingest(text)
+                    asyncio.create_task(summary_engine.maybe_emit())
     except WebSocketDisconnect:
         pass
     finally:

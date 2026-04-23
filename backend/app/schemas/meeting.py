@@ -35,6 +35,7 @@ class ActionItemOut(BaseModel):
     task: str
     assigned_to: str | None = None
     deadline: str | None = None
+    due_at: datetime | None = None
     status: str | None = None
     assigned_user_id: uuid.UUID | None = None
     source: str | None = None
@@ -64,13 +65,31 @@ class MeetingProcessingJobOut(BaseModel):
     created_by: UserOut
 
 
+class TranscriptSegmentOut(BaseModel):
+    id: uuid.UUID
+    order_index: int
+    start_ms: int
+    end_ms: int
+    text: str
+    speaker_label: str
+    confidence: float | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class TranscriptBrief(BaseModel):
     id: uuid.UUID
     transcript_text: str
     cleaned_transcript: str | None = None
+    translated_text: str | None = None
+    translated_language: str | None = None
     summary: str | None = None
     key_points: list[str] = Field(default_factory=list)
     action_items: list[ActionItemOut] = Field(default_factory=list)
+    language: str | None = None
+    duration_ms: int | None = None
+    audio_path: str | None = None
+    has_audio: bool = False
     segment_index: int | None
     created_at: datetime
 
@@ -128,6 +147,20 @@ class TranscriptRegenerateResponse(TranscriptBrief):
     pass
 
 
+class TranscriptSegmentsResponse(BaseModel):
+    transcript_id: uuid.UUID
+    language: str | None = None
+    duration_ms: int | None = None
+    has_audio: bool = False
+    segments: list[TranscriptSegmentOut] = Field(default_factory=list)
+
+
+class TranscriptTranslationResponse(BaseModel):
+    transcript_id: uuid.UUID
+    target_language: str
+    translated_text: str
+
+
 class MeetingQuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
 
@@ -149,6 +182,7 @@ class ActionItemUpdateRequest(BaseModel):
     assigned_to_name: str | None = Field(default=None, max_length=255)
     assigned_user_id: uuid.UUID | None = None
     deadline: str | None = Field(default=None, max_length=255)
+    due_at: datetime | None = None
     status: str | None = Field(default=None, max_length=50)
 
     @field_validator("task", "assigned_to_name", "deadline", mode="before")
@@ -164,3 +198,29 @@ class MeetingExportResponse(BaseModel):
     format: str
     filename: str
     content: str
+
+
+class AskAcrossMeetingsRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    top_k: int = Field(default=6, ge=1, le=20)
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def _strip_question(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return value.strip()
+
+
+class AskCitation(BaseModel):
+    meeting_id: uuid.UUID
+    meeting_title: str
+    transcript_id: uuid.UUID
+    chunk_index: int
+    score: float
+    snippet: str
+
+
+class AskAcrossMeetingsResponse(BaseModel):
+    answer: str
+    citations: list[AskCitation] = Field(default_factory=list)

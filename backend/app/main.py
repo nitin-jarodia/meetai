@@ -10,6 +10,8 @@ from app.api.v1 import action_items, ai, auth, meetings, transcripts, websocket 
 from app.core.config import settings
 from app.core.database import Base, engine
 from app.core.schema_patches import apply_transcript_storage_columns
+from app.services.processing_service import get_processing_runtime
+from app.services.reminder_scheduler import get_scheduler
 
 
 @asynccontextmanager
@@ -17,14 +19,22 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(apply_transcript_storage_columns)
-    yield
-    await engine.dispose()
+
+    scheduler = get_scheduler()
+    await scheduler.start()
+
+    try:
+        yield
+    finally:
+        await scheduler.stop()
+        await get_processing_runtime().close()
+        await engine.dispose()
 
 
 app = FastAPI(
     title="MeetAI API",
     description="AI Meeting Assistant — foundation API",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 

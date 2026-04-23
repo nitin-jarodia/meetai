@@ -11,15 +11,18 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.meeting_action_item import MeetingActionItem
 from app.models.meeting_qa import MeetingQAEntry
 from app.models.meeting import Meeting
 from app.models.participant import Participant
 from app.models.processing_job import MeetingProcessingJob
 from app.models.transcript import Transcript
+from app.models.transcript_segment import TranscriptSegment
 from app.models.user import User
 from app.repositories.meeting_repository import MeetingRepository
 from app.repositories.qa_repository import QARepository
+from app.repositories.transcript_repository import TranscriptRepository
 from app.schemas.meeting import (
     ActionItemOut,
     MeetingCreate,
@@ -42,7 +45,11 @@ from app.services.ai_service import (
     TranscriptCleanupError,
 )
 from app.services.search_service import SearchService
-from app.services.transcription_service import transcribe_audio, TranscriptionError
+from app.services.transcription_service import (
+    TranscriptionError,
+    TranscriptionResult,
+    transcribe_audio,
+)
 
 
 class MeetingNotFoundError(Exception):
@@ -65,6 +72,8 @@ class ProcessedAudioUpload:
     summary: str
     key_points: list[str]
     action_items: list[dict[str, str | None]]
+    language: str | None
+    duration_ms: int | None
 
 
 @dataclass(slots=True)
@@ -79,11 +88,60 @@ def serialize_action_item(item: MeetingActionItem) -> ActionItemOut:
         task=item.task,
         assigned_to=item.assigned_to_name,
         deadline=item.deadline,
+        due_at=item.due_at,
         status=item.status,
         assigned_user_id=item.assigned_user_id,
         source=item.source,
         updated_at=item.updated_at,
     )
+
+
+def serialize_transcript(transcript: Transcript) -> TranscriptBrief:
+    action_items_payload = transcript.action_items or []
+    return TranscriptBrief(
+        id=transcript.id,
+        transcript_text=transcript.transcript_text or transcript.content or "",
+        cleaned_transcript=transcript.cleaned_transcript,
+        translated_text=transcript.translated_text,
+        translated_language=transcript.translated_language,
+        summary=transcript.summary,
+        key_points=transcript.key_points or [],
+        action_items=[
+            ActionItemOut(
+                id=_safe_uuid(item.get("id")) if isinstance(item, dict) else None,
+                task=(item.get("task") or "") if isinstance(item, dict) else "",
+                assigned_to=item.get("assigned_to") if isinstance(item, dict) else None,
+                deadline=item.get("deadline") if isinstance(item, dict) else None,
+                due_at=_parse_iso(item.get("due_at")) if isinstance(item, dict) else None,
+                status=item.get("status") if isinstance(item, dict) else None,
+            )
+            for item in action_items_payload
+        ],
+        language=transcript.language,
+        duration_ms=transcript.duration_ms,
+        audio_path=transcript.audio_path,
+        has_audio=bool(transcript.audio_path),
+        segment_index=transcript.segment_index,
+        created_at=transcript.created_at,
+    )
+
+
+def _safe_uuid(value: object) -> uuid.UUID | None:
+    if not value:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def serialize_job(job: MeetingProcessingJob) -> MeetingProcessingJobOut:
@@ -118,6 +176,7 @@ class MeetingService:
         self.session = session
         self.meetings = MeetingRepository(session)
         self.qa_entries = QARepository(session)
+        self.transcripts = TranscriptRepository(session)
 
     def _serialize_meeting_detail(self, meeting: Meeting) -> MeetingDetail:
         host_out = UserOut.model_validate(meeting.host)
@@ -130,9 +189,7 @@ class MeetingService:
             )
             for participant in meeting.participants
         ]
-        transcripts = [
-            TranscriptBrief.model_validate(transcript) for transcript in meeting.transcripts
-        ]
+        transcripts = [serialize_transcript(t) for t in meeting.transcripts]
         return MeetingDetail(
             id=meeting.id,
             title=meeting.title,
@@ -156,7 +213,6 @@ class MeetingService:
             created_at=now,
         )
         await self.meetings.create(meeting)
-        # Host is implicitly a participant for UX
         await self.meetings.add_participant(
             Participant(
                 meeting_id=meeting.id,
@@ -238,24 +294,46 @@ class MeetingService:
         user: User,
         saved_file_path: Path,
         ai: AIService,
+        *,
+        persistent_audio_path: Path | None = None,
+        audio_mime_type: str | None = None,
         progress_callback: Callable[[str, float], Awaitable[None]] | None = None,
     ) -> ProcessedAudioUpload:
         """
-        Transcribe audio, generate structured analysis, persist Transcript, and return
-        the structured API payload.
+        Transcribe audio, generate structured analysis, persist Transcript +
+        timestamped segments, and return the structured API payload.
 
-        Raises MeetingNotFoundError, MeetingAccessDeniedError, TranscriptionError.
+        If ``persistent_audio_path`` is provided, it is stored relative to the
+        backend's uploads directory on the Transcript so the frontend can stream
+        it back for click-to-seek playback.
         """
         meeting = await self._get_meeting_for_user(meeting_id, user)
         if progress_callback:
             await progress_callback("transcribing", 0.2)
-        transcript_text = await asyncio.to_thread(transcribe_audio, str(saved_file_path))
+
+        transcription: TranscriptionResult = await asyncio.to_thread(
+            transcribe_audio, str(saved_file_path)
+        )
+        transcript_text = transcription.text
+
         if progress_callback:
             await progress_callback("cleaning_transcript", 0.5)
         cleaned_transcript = await self._clean_transcript(transcript_text, ai)
         if progress_callback:
             await progress_callback("analyzing_transcript", 0.75)
         analysis = await self._analyze_transcript(cleaned_transcript, ai)
+
+        audio_rel_path: str | None = None
+        if persistent_audio_path is not None:
+            try:
+                audio_rel_path = str(
+                    persistent_audio_path.resolve().relative_to(
+                        settings.backend_root.resolve()
+                    )
+                )
+            except ValueError:
+                audio_rel_path = str(persistent_audio_path.resolve())
+
         now = datetime.now(timezone.utc)
         transcript = await self.meetings.add_transcript(
             Transcript(
@@ -266,11 +344,34 @@ class MeetingService:
                 summary=analysis.summary,
                 key_points=analysis.key_points,
                 action_items=[item.model_dump() for item in analysis.action_items],
+                language=transcription.language,
+                duration_ms=transcription.duration_ms or None,
+                audio_path=audio_rel_path,
+                audio_mime_type=audio_mime_type,
                 segment_index=None,
                 created_at=now,
             )
         )
-        await sync_ai_action_items(self.session, meeting, transcript, analysis.action_items)
+
+        # Persist timestamped + diarized segments
+        segment_rows = [
+            TranscriptSegment(
+                transcript_id=transcript.id,
+                order_index=seg.order_index,
+                start_ms=seg.start_ms,
+                end_ms=seg.end_ms,
+                text=seg.text,
+                speaker_label=seg.speaker_label,
+                confidence=seg.confidence,
+                created_at=now,
+            )
+            for seg in transcription.segments
+        ]
+        await self.transcripts.replace_segments(transcript.id, segment_rows)
+
+        await sync_ai_action_items(
+            self.session, meeting, transcript, analysis.action_items
+        )
         if progress_callback:
             await progress_callback("indexing_search", 0.9)
         await SearchService(self.session).index_transcript(meeting, transcript)
@@ -281,6 +382,8 @@ class MeetingService:
             summary=analysis.summary,
             key_points=analysis.key_points,
             action_items=transcript.action_items,
+            language=transcription.language,
+            duration_ms=transcription.duration_ms or None,
         )
 
     async def ask_meeting_question(
@@ -335,14 +438,14 @@ class MeetingService:
             )
 
         latest_transcript = detail.transcripts[0] if detail.transcripts else None
-        key_points = "\n".join(f"- {point}" for point in latest_transcript.key_points) if latest_transcript else ""
+        key_points = (
+            "\n".join(f"- {point}" for point in latest_transcript.key_points)
+            if latest_transcript
+            else ""
+        )
         action_items = "\n".join(
             f"- [{item.status or 'open'}] {item.task}"
-            + (
-                f" (owner: {item.assigned_to})"
-                if item.assigned_to
-                else ""
-            )
+            + (f" (owner: {item.assigned_to})" if item.assigned_to else "")
             + (f" (deadline: {item.deadline})" if item.deadline else "")
             for item in detail.action_items
         )
@@ -363,7 +466,9 @@ class MeetingService:
                 f"Host: {detail.host.email}",
                 "",
                 "## Summary",
-                latest_transcript.summary if latest_transcript and latest_transcript.summary else "No summary available.",
+                latest_transcript.summary
+                if latest_transcript and latest_transcript.summary
+                else "No summary available.",
                 "",
                 "## Key Points",
                 key_points or "- None yet",

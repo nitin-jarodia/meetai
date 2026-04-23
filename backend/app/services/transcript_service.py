@@ -51,6 +51,14 @@ class TranscriptService:
             return transcript
         raise TranscriptAccessDeniedError()
 
+    async def get_transcript_with_segments(
+        self, transcript_id: uuid.UUID, user: User
+    ) -> Transcript:
+        transcript = await self._get_transcript_for_user(transcript_id, user)
+        # Force-load segments eagerly.
+        hydrated = await self.transcripts.get_with_segments(transcript.id)
+        return hydrated or transcript
+
     @staticmethod
     def _get_cleaned_source(transcript: Transcript) -> str:
         return (

@@ -20,3 +20,21 @@ groq==0.13.1
 openai-whisper>=20231117
 # Bundled ffmpeg binary so Whisper can decode MP3/WAV on Windows without a system install
 imageio-ffmpeg>=0.5.1
+
+# Structured deadlines / reminders
+dateparser==1.2.0
+apscheduler==3.11.0
+
+# Notifications (SMTP). Gracefully no-ops when SMTP_HOST is unset.
+aiosmtplib==3.0.2
+
+# Background worker. In-process fallback when ARQ_REDIS_URL is unset.
+arq==0.26.3
+
+# Vector search on PostgreSQL. Falls back to a cosine Python path on SQLite.
+pgvector==0.3.6
+
+# Optional better embeddings — install separately to opt in:
+#   pip install sentence-transformers
+# MeetAI auto-detects and uses it when available; otherwise a deterministic
+# hash-token fallback is used so the app still works offline.

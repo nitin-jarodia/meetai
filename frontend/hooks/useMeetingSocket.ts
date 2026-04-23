@@ -3,11 +3,30 @@
 import { useEffect, useRef, useState } from "react";
 import { getWebSocketBaseUrl } from "@/lib/publicApi";
 
+export type ActionItemReminderPayload = {
+  id: string;
+  meeting_id: string;
+  task: string;
+  status: string | null;
+  assigned_to: string | null;
+  assigned_user_id: string | null;
+  due_at: string | null;
+  deadline: string | null;
+};
+
+export type LiveSummaryPayload = {
+  summary: string;
+  char_count?: number;
+};
+
 export type MeetingSocketEvent =
   | { type: "connected"; meeting_id: string; authenticated: boolean }
   | { type: "job_updated"; job: Record<string, unknown> }
   | { type: "transcript_ready"; meeting_id: string; job_id: string }
   | { type: "job_failed"; meeting_id: string; job_id: string; error: string }
+  | { type: "action_item_due_soon"; action_item: ActionItemReminderPayload }
+  | { type: "action_item_overdue"; action_item: ActionItemReminderPayload }
+  | ({ type: "live_summary_updated" } & LiveSummaryPayload)
   | { type: "pong" }
   | { type: "ack"; payload: string };
 
